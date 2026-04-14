@@ -81,7 +81,7 @@ export default function App() {
     const [customItems, setCustomItems] = useState([])
     const [activePdf, setActivePdf] = useState(null)
     const [addModal, setAddModal] = useState(false)
-    const [customForm, setCustomForm] = useState({ name: '', code: '', mrp: '', casePack: '', brand: '' })
+    const [customForm, setCustomForm] = useState({ name: '', code: '', mrp: '', casePack: '', brand: '', options: '' })
     const [openSections, setOpenSections] = useState({})
     const [imgModal, setImgModal] = useState(null)
     const [toast, setToast] = useState('')
@@ -103,6 +103,10 @@ export default function App() {
     const [activeClientFilter, setActiveClientFilter] = useState('All')
     const [paymentInput, setPaymentInput] = useState('')
     const [billInput, setBillInput] = useState('')
+    const [manualEntry, setManualEntry] = useState(null)
+    const [entryForm, setEntryForm] = useState({ amount: '', date: '', time: '', reason: '' })
+    const [editEntry, setEditEntry] = useState(null)
+    const [editForm, setEditForm] = useState({ amount: '', date: '', time: '', reason: '' })
     const [clientModal, setClientModal] = useState(false)
     const [clientForm, setClientForm] = useState({ name: '' })
     const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2000) }
@@ -228,9 +232,11 @@ export default function App() {
     }, [])
 
     const handleAddCustom = async () => {
+        const baseName = customForm.name || 'Custom Product';
+        const finalName = customForm.options ? `${baseName} (${customForm.options})` : baseName;
         const newItem = {
             id: `custom-${Date.now()}`,
-            name: customForm.name || 'Custom Product',
+            name: finalName,
             code: customForm.code || '-',
             mrp: parseInt(customForm.mrp) || 0,
             casePack: parseInt(customForm.casePack) || 1,
@@ -241,7 +247,7 @@ export default function App() {
         } catch(e) { console.error('Failed to save to IDB', e); }
         setCustomItems(prev => [...prev, newItem])
         setAddModal(false)
-        setCustomForm({ name: '', code: '', mrp: '', casePack: '', brand: '' })
+        setCustomForm({ name: '', code: '', mrp: '', casePack: '', brand: '', options: '' })
         showToast('Item added!')
     }
 
@@ -409,13 +415,17 @@ export default function App() {
         doc.setFontSize(16)
         doc.text(`Hawkins Order - ${today}`, 14, 20)
         doc.setFontSize(10)
-        doc.text(`Total Items: ${orderedItems.length}`, 14, 28)
+        const totalBoxes = orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0);
+        const totalPieces = orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0);
+        let headerText = `Total Items: ${orderedItems.length}`;
+        if (totalBoxes > 0) headerText += ` | Total Boxes: ${totalBoxes}`;
+        if (totalPieces > 0) headerText += ` | Total Pieces: ${totalPieces}`;
+        doc.text(headerText, 14, 28)
 
         const rows = orderedItems.map((item, i) => {
             let qtyStr = '';
             if (item.type === 'box') {
-                const totalPieces = item.qty * (item.casePack || 1);
-                qtyStr = `${item.qty} Box / ${totalPieces} Pieces`;
+                qtyStr = item.qty === 1 ? '1 Box' : `${item.qty} Boxes`;
             } else {
                 qtyStr = item.qty === 1 ? '1 Piece' : `${item.qty} Pieces`;
             }
@@ -464,6 +474,14 @@ export default function App() {
         doc.setFontSize(16)
         const title = customerName.trim() ? `Hawkins Bill - ${customerName.trim()} - ${today}` : `Hawkins Bill - ${today}`;
         doc.text(title, 14, 20)
+        
+        doc.setFontSize(10);
+        const totalBoxes = orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.boxQty) || 0), 0);
+        const totalPieces = orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.pcsQty) || 0), 0);
+        let headerText = `Total Items: ${orderedItems.length + customBillItems.length}`;
+        if (totalBoxes > 0) headerText += ` | Total Boxes: ${totalBoxes}`;
+        if (totalPieces > 0) headerText += ` | Total Pieces: ${totalPieces}`;
+        doc.text(headerText, 14, 28);
 
         let grandTotal = 0;
 
@@ -478,7 +496,7 @@ export default function App() {
 
             let qtyStr = '';
             if (item.type === 'box') {
-                qtyStr = `${item.qty} Box / ${totalUnits} Pieces`;
+                qtyStr = item.qty === 1 ? '1 Box' : `${item.qty} Boxes`;
             } else {
                 qtyStr = totalUnits === 1 ? '1 Piece' : `${totalUnits} Pieces`;
             }
@@ -507,7 +525,7 @@ export default function App() {
         rows.push(['', '', '', '', 'GRAND TOTAL:', `Rs.${grandTotal}`])
 
         doc.autoTable({
-            startY: 28,
+            startY: 34,
             head: [['#', 'Product Name', 'Code', 'Qty', 'MRP', 'Final Price']],
             body: rows,
             styles: { fontSize: 10, cellPadding: 4, textColor: [0, 0, 0] },
@@ -568,6 +586,14 @@ export default function App() {
         doc.setFontSize(16)
         const title = customerName.trim() ? `Hawkins Bill - ${customerName.trim()} - ${today}` : `Hawkins Bill - ${today}`;
         doc.text(title, 14, 20)
+        
+        doc.setFontSize(10);
+        const totalBoxes = orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.boxQty) || 0), 0);
+        const totalPieces = orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.pcsQty) || 0), 0);
+        let headerText = `Total Items: ${orderedItems.length + customBillItems.length}`;
+        if (totalBoxes > 0) headerText += ` | Total Boxes: ${totalBoxes}`;
+        if (totalPieces > 0) headerText += ` | Total Pieces: ${totalPieces}`;
+        doc.text(headerText, 14, 28);
 
         let grandTotal = 0;
 
@@ -582,7 +608,7 @@ export default function App() {
 
             let qtyStr = '';
             if (item.type === 'box') {
-                qtyStr = `${item.qty} Box / ${totalUnits} Pieces`;
+                qtyStr = item.qty === 1 ? '1 Box' : `${item.qty} Boxes`;
             } else {
                 qtyStr = totalUnits === 1 ? '1 Piece' : `${totalUnits} Pieces`;
             }
@@ -611,7 +637,7 @@ export default function App() {
         rows.push(['', '', '', '', '', 'GRAND TOTAL:', `Rs.${grandTotal}`])
 
         doc.autoTable({
-            startY: 28,
+            startY: 34,
             head: [['#', 'Product Name', 'Code', 'Qty', 'MRP', 'Discount', 'Final Price']],
             body: rows,
             styles: { fontSize: 9, cellPadding: 3, textColor: [0, 0, 0] },
@@ -1140,41 +1166,71 @@ export default function App() {
                                             );
                                         })()}
 
-                                        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                                <span style={{ fontSize: '0.9rem', fontWeight: 600, width: 90, color: 'var(--accent)' }}>Bill Section</span>
-                                                <input type="number" placeholder="Enter the bill made" value={billInput} onChange={e => setBillInput(e.target.value)} className="search-input" style={{ flex: 1 }} />
-                                                <button onClick={async () => {
-                                                    const val = parseFloat(billInput) || 0;
-                                                    if(val <= 0) return showToast('Enter valid amount');
-                                                    try {
-                                                        await addManualBill(activeClient.name, val);
-                                                        setBillInput('');
-                                                        const updated = await getClients();
-                                                        setClientsList(updated);
-                                                        setActiveClient(updated.find(c => c.name === activeClient.name));
-                                                        showToast('Bill added!');
-                                                    } catch(e) { console.error(e); }
-                                                }} style={{ padding: '10px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, width: 120 }}>Add Bill</button>
-                                            </div>
+                                        <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+                                            <button onClick={() => {
+                                                const now = new Date();
+                                                setEntryForm({ amount: '', date: now.toISOString().split('T')[0], time: now.toTimeString().slice(0,5), reason: '' });
+                                                setManualEntry('bill');
+                                            }} style={{ flex: 1, padding: '10px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700 }}>+ Add Manual Bill</button>
                                             
-                                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                                <span style={{ fontSize: '0.9rem', fontWeight: 600, width: 90, color: 'var(--green)' }}>Rec. Section</span>
-                                                <input type="number" placeholder="Enter amount received" value={paymentInput} onChange={e => setPaymentInput(e.target.value)} className="search-input" style={{ flex: 1 }} />
-                                                <button onClick={async () => {
-                                                    const val = parseFloat(paymentInput) || 0;
-                                                    if(val <= 0) return showToast('Enter valid amount');
-                                                    try {
-                                                        await updateClientPayment(activeClient.name, val);
-                                                        setPaymentInput('');
-                                                        const updated = await getClients();
-                                                        setClientsList(updated);
-                                                        setActiveClient(updated.find(c => c.name === activeClient.name));
-                                                        showToast('Receipt added!');
-                                                    } catch(e) { console.error(e); }
-                                                }} style={{ padding: '10px 16px', background: 'var(--green)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, width: 120 }}>Add Receipt</button>
-                                            </div>
+                                            <button onClick={() => {
+                                                const now = new Date();
+                                                setEntryForm({ amount: '', date: now.toISOString().split('T')[0], time: now.toTimeString().slice(0,5), reason: '' });
+                                                setManualEntry('receipt');
+                                            }} style={{ flex: 1, padding: '10px', background: 'var(--green)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700 }}>+ Add Receipt</button>
                                         </div>
+
+                                        {manualEntry && (() => {
+                                            const totalBilled = activeClient.bills.reduce((sum, bill) => sum + bill.grandTotal, 0);
+                                            const received = (activeClient.receipts && activeClient.receipts.length > 0) ? activeClient.receipts.reduce((sum, r) => sum + r.amount, 0) : (parseFloat(activeClient.amountReceived) || 0);
+                                            const balance = totalBilled - received;
+                                            const amountNum = parseFloat(entryForm.amount) || 0;
+                                            const newBalance = manualEntry === 'bill' ? (balance + amountNum) : (balance - amountNum);
+
+                                            return (
+                                                <div style={{ marginTop: 16, background: '#f8f8f8', padding: '16px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                                    <h3 style={{ fontSize: '0.95rem', marginBottom: 12 }}>{manualEntry === 'bill' ? 'Add Manual Bill' : 'Add Receipt'}</h3>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#666' }}>
+                                                            <span>Previous Balance:</span>
+                                                            <span style={{ fontWeight: 'bold' }}>₹{balance}</span>
+                                                        </div>
+                                                        <input type="number" placeholder="Amount (₹)" value={entryForm.amount} onChange={e => setEntryForm({...entryForm, amount: e.target.value})} className="search-input" style={{ width: '100%', padding: '10px' }} autoFocus />
+                                                        <div style={{ display: 'flex', gap: 8 }}>
+                                                            <input type="date" value={entryForm.date} onChange={e => setEntryForm({...entryForm, date: e.target.value})} className="search-input" style={{ flex: 1, padding: '10px' }} />
+                                                            <input type="time" value={entryForm.time} onChange={e => setEntryForm({...entryForm, time: e.target.value})} className="search-input" style={{ flex: 1, padding: '10px' }} />
+                                                        </div>
+                                                        <input type="text" placeholder="Remarks / Reason (Optional)" value={entryForm.reason} onChange={e => setEntryForm({...entryForm, reason: e.target.value})} className="search-input" style={{ width: '100%', padding: '10px' }} />
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', background: '#e0e0e0', padding: 8, borderRadius: 4 }}>
+                                                            <span>New Balance:</span>
+                                                            <span style={{ fontWeight: 'bold', color: newBalance > 0 ? '#d32f2f' : newBalance < 0 ? '#2e7d32' : '#333' }}>₹{newBalance}</span>
+                                                        </div>
+                                                        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                                                            <button onClick={async () => {
+                                                                if (amountNum <= 0) return showToast('Enter valid amount');
+                                                                try {
+                                                                    const dateObj = new Date(`${entryForm.date}T${entryForm.time || '00:00'}`);
+                                                                    const displayDate = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                                                                    const ts = dateObj.getTime();
+
+                                                                    if (manualEntry === 'bill') {
+                                                                        await addManualBill(activeClient.name, amountNum, displayDate, ts, entryForm.reason);
+                                                                    } else {
+                                                                        await updateClientPayment(activeClient.name, amountNum, displayDate, ts, entryForm.reason);
+                                                                    }
+                                                                    setManualEntry(null);
+                                                                    const updated = await getClients();
+                                                                    setClientsList(updated);
+                                                                    setActiveClient(updated.find(c => c.name === activeClient.name));
+                                                                    showToast(`${manualEntry === 'bill' ? 'Bill' : 'Receipt'} added!`);
+                                                                } catch(e) { console.error(e); showToast('Error saving entry'); }
+                                                            }} style={{ flex: 1, background: manualEntry === 'bill' ? 'var(--accent)' : 'var(--green)', color: '#fff', border: 'none', padding: '10px', borderRadius: 8, fontWeight: 'bold' }}>Save</button>
+                                                            <button onClick={() => setManualEntry(null)} style={{ background: '#ddd', color: '#333', border: 'none', padding: '10px 16px', borderRadius: 8, fontWeight: 'bold' }}>Cancel</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
 
                                     <div style={{ padding: '16px' }}>
@@ -1213,6 +1269,11 @@ export default function App() {
                                                             {entry._type === 'bill' ? `₹${entry.grandTotal} (Bill)` : `₹${entry.amount} (Receipt)`}
                                                         </div>
                                                     </div>
+                                                    {entry.remarks && (
+                                                        <div style={{ fontSize: '0.8rem', color: '#555', marginTop: 4, background: '#f0f0f0', padding: '4px 8px', borderRadius: 4, display: 'inline-block' }}>
+                                                            💬 {entry.remarks}
+                                                        </div>
+                                                    )}
                                                     {entry._type === 'bill' && (
                                                         <div className="client-bill-meta">
                                                             <span>{entry.totalItems} Items</span>
@@ -1231,18 +1292,13 @@ export default function App() {
                                                                 }
                                                             }} className="client-action-btn view-btn">View PDF</button>
                                                         )}
-                                                        <button onClick={async () => {
-                                                            const newAmount = prompt(`Confirm new amount for this ${entry._type}:`, entry._type === 'bill' ? entry.grandTotal : entry.amount);
-                                                            const parsed = parseFloat(newAmount);
-                                                            if (!isNaN(parsed) && parsed > 0) {
-                                                                try {
-                                                                    await editClientRecord(activeClient.name, entry._type, entry.timestamp, parsed);
-                                                                    const updated = await getClients();
-                                                                    setClientsList(updated);
-                                                                    setActiveClient(updated.find(c => c.name === activeClient.name));
-                                                                    showToast('Record Updated!');
-                                                                } catch(e) { console.error(e); }
-                                                            }
+                                                        <button onClick={() => {
+                                                            const d = new Date(entry.timestamp);
+                                                            const amt = entry._type === 'bill' ? entry.grandTotal : entry.amount;
+                                                            // to local YYYY-MM-DD string
+                                                            const yyyy = d.getFullYear(); const mm = String(d.getMonth() + 1).padStart(2, '0'); const dd = String(d.getDate()).padStart(2, '0');
+                                                            setEditEntry({ type: entry._type, oldTimestamp: entry.timestamp });
+                                                            setEditForm({ amount: amt, date: `${yyyy}-${mm}-${dd}`, time: d.toTimeString().slice(0,5), reason: entry.remarks || '' });
                                                         }} className="client-action-btn" style={{ background: '#fff9c4', color: '#f57f17', border: '1px solid #fff59d' }}>✎ Edit</button>
                                                         
                                                         <button onClick={async () => {
@@ -1261,6 +1317,41 @@ export default function App() {
                                                 </div>
                                             ));
                                         })()}
+
+                                        {editEntry && (
+                                            <div style={{ marginTop: 16, background: '#fff9c4', padding: '16px', borderRadius: 8, border: '1px solid #fff59d' }}>
+                                                <h3 style={{ fontSize: '0.95rem', marginBottom: 12 }}>Edit {editEntry.type === 'bill' ? 'Bill' : 'Receipt'}</h3>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                                    <input type="number" placeholder="Amount (₹)" value={editForm.amount} onChange={e => setEditForm({...editForm, amount: e.target.value})} className="search-input" style={{ width: '100%', padding: '10px' }} autoFocus />
+                                                    <div style={{ display: 'flex', gap: 8 }}>
+                                                        <input type="date" value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} className="search-input" style={{ flex: 1, padding: '10px' }} />
+                                                        <input type="time" value={editForm.time} onChange={e => setEditForm({...editForm, time: e.target.value})} className="search-input" style={{ flex: 1, padding: '10px' }} />
+                                                    </div>
+                                                    <input type="text" placeholder="Remarks / Reason (Optional)" value={editForm.reason} onChange={e => setEditForm({...editForm, reason: e.target.value})} className="search-input" style={{ width: '100%', padding: '10px' }} />
+                                                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                                                        <button onClick={async () => {
+                                                            const amountNum = parseFloat(editForm.amount) || 0;
+                                                            if (amountNum <= 0) return showToast('Enter valid amount');
+                                                            try {
+                                                                const dateObj = new Date(`${editForm.date}T${editForm.time || '00:00'}`);
+                                                                const displayDate = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                                                                const ts = dateObj.getTime();
+                                                                
+                                                                await editClientRecord(activeClient.name, editEntry.type, editEntry.oldTimestamp, {
+                                                                    amount: amountNum, dateStr: displayDate, newTimestamp: ts, remarks: editForm.reason
+                                                                });
+                                                                setEditEntry(null);
+                                                                const updated = await getClients();
+                                                                setClientsList(updated);
+                                                                setActiveClient(updated.find(c => c.name === activeClient.name));
+                                                                showToast('Record Updated!');
+                                                            } catch(e) { console.error(e); showToast('Error updating entry'); }
+                                                        }} style={{ flex: 1, background: '#f57f17', color: '#fff', border: 'none', padding: '10px', borderRadius: 8, fontWeight: 'bold' }}>Update</button>
+                                                        <button onClick={() => setEditEntry(null)} style={{ background: '#ddd', color: '#333', border: 'none', padding: '10px 16px', borderRadius: 8, fontWeight: 'bold' }}>Cancel</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -1309,6 +1400,7 @@ export default function App() {
                                 <input className="search-input" style={{ width: '100%', paddingLeft: 12 }} placeholder="MRP (Optional)" type="number" value={customForm.mrp} onChange={e => setCustomForm({ ...customForm, mrp: e.target.value })} />
                                 <input className="search-input" style={{ width: '100%', paddingLeft: 12 }} placeholder="Case Pack Size" type="number" value={customForm.casePack} onChange={e => setCustomForm({ ...customForm, casePack: e.target.value })} />
                             </div>
+                            <input className="search-input" style={{ width: '100%', paddingLeft: 12 }} placeholder="Options / Variations (e.g. Red, 5L, Silver)" value={customForm.options} onChange={e => setCustomForm({ ...customForm, options: e.target.value })} />
                         </div>
                         <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
                             <button className="img-modal-close" style={{ flex: 1, marginTop: 0, background: 'var(--text2)' }} onClick={() => setAddModal(false)}>Cancel</button>

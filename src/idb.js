@@ -232,7 +232,7 @@ export const getClients = async () => {
     })
 }
 
-export const updateClientPayment = async (clientName, amount) => {
+export const updateClientPayment = async (clientName, amount, customDateStr, customTimestamp, remarks) => {
     const db = await initDB()
     return new Promise((resolve, reject) => {
         const tx = db.transaction('clients', 'readwrite')
@@ -258,8 +258,9 @@ export const updateClientPayment = async (clientName, amount) => {
             
             existingClient.receipts.push({
                 amount: amount,
-                date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-                timestamp: Date.now()
+                date: customDateStr || new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+                timestamp: customTimestamp || Date.now(),
+                remarks: remarks || ''
             });
 
             const putReq = store.put(existingClient)
@@ -297,7 +298,7 @@ export const createManualClient = async (clientName) => {
     })
 }
 
-export const addManualBill = async (clientName, amount) => {
+export const addManualBill = async (clientName, amount, customDateStr, customTimestamp, remarks) => {
     const db = await initDB()
     return new Promise((resolve, reject) => {
         const tx = db.transaction('clients', 'readwrite')
@@ -320,16 +321,17 @@ export const addManualBill = async (clientName, amount) => {
                 }
             }
 
-            const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+            const today = customDateStr || new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
             
             existingClient.bills.push({
                 filename: 'Manual Record',
                 date: today,
-                timestamp: Date.now(),
+                timestamp: customTimestamp || Date.now(),
                 totalItems: 0,
                 grandTotal: amount,
                 boxes: 0,
-                pieces: 0
+                pieces: 0,
+                remarks: remarks || ''
             })
 
             const putReq = store.put(existingClient)
@@ -340,7 +342,7 @@ export const addManualBill = async (clientName, amount) => {
     })
 }
 
-export const editClientRecord = async (clientName, type, timestamp, newAmount) => {
+export const editClientRecord = async (clientName, type, oldTimestamp, updates) => {
     const db = await initDB()
     return new Promise((resolve, reject) => {
         const tx = db.transaction('clients', 'readwrite')
@@ -353,12 +355,21 @@ export const editClientRecord = async (clientName, type, timestamp, newAmount) =
             if (!client) return reject(new Error('Client not found'))
             
             if (type === 'bill') {
-                const idx = client.bills.findIndex(b => b.timestamp === timestamp);
-                if (idx !== -1) client.bills[idx].grandTotal = newAmount;
-            } else if (type === 'receipt') {
-                const idx = client.receipts.findIndex(r => r.timestamp === timestamp);
+                const idx = client.bills.findIndex(b => b.timestamp === oldTimestamp);
                 if (idx !== -1) {
-                    client.receipts[idx].amount = newAmount;
+                    client.bills[idx].grandTotal = updates.amount;
+                    client.bills[idx].date = updates.dateStr || client.bills[idx].date;
+                    client.bills[idx].timestamp = updates.newTimestamp || client.bills[idx].timestamp;
+                    if (updates.remarks !== undefined) client.bills[idx].remarks = updates.remarks;
+                }
+            } else if (type === 'receipt') {
+                const idx = client.receipts.findIndex(r => r.timestamp === oldTimestamp);
+                if (idx !== -1) {
+                    client.receipts[idx].amount = updates.amount;
+                    client.receipts[idx].date = updates.dateStr || client.receipts[idx].date;
+                    client.receipts[idx].timestamp = updates.newTimestamp || client.receipts[idx].timestamp;
+                    if (updates.remarks !== undefined) client.receipts[idx].remarks = updates.remarks;
+                    
                     client.amountReceived = client.receipts.reduce((sum, r) => sum + r.amount, 0);
                 }
             }
