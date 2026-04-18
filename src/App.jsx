@@ -26,6 +26,7 @@ sections.forEach(s => {
 const PdfCanvas = ({ src }) => {
     const containerRef = React.useRef(null)
     const [numPages, setNumPages] = useState(0)
+    const [zoom, setZoom] = useState(100)
 
     useEffect(() => {
         if (!src) return;
@@ -34,7 +35,6 @@ const PdfCanvas = ({ src }) => {
                 if (!window.pdfjsLib) {
                     console.warn("pdfjsLib not loaded yet...");
                     containerRef.current.innerHTML = '<p style="padding: 20px; text-align: center;">Loading PDF engine...</p>';
-                    // Retry in 1 second
                     setTimeout(renderPdf, 1000);
                     return;
                 }
@@ -45,28 +45,47 @@ const PdfCanvas = ({ src }) => {
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i)
-                    const viewport = page.getViewport({ scale: 1.5 })
+                    // Render with high resolution inherently
+                    const viewport = page.getViewport({ scale: 2.0 })
                     const canvas = document.createElement('canvas')
                     const context = canvas.getContext('2d')
                     canvas.height = viewport.height
                     canvas.width = viewport.width
-                    canvas.style.width = '100%'
+                    // The CSS width will be handled by the zoom effect
+                    canvas.style.width = `${zoom}%`
                     canvas.style.marginBottom = '12px'
                     canvas.style.borderRadius = '8px'
+                    canvas.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'
                     containerRef.current.appendChild(canvas)
                     await page.render({ canvasContext: context, viewport }).promise
                 }
             } catch (e) {
                 console.error('PDF Render Error:', e)
-                containerRef.current.innerHTML = '<p style="padding: 20px; color: red; text-align: center;">Failed to render PDF</p>'
+                if (containerRef.current) {
+                    containerRef.current.innerHTML = '<p style="color: red; padding: 20px;">Failed to render PDF</p>'
+                }
             }
         }
         renderPdf()
     }, [src])
 
+    useEffect(() => {
+        if (containerRef.current) {
+            const canvases = containerRef.current.querySelectorAll('canvas');
+            canvases.forEach(c => c.style.width = `${zoom}%`);
+        }
+    }, [zoom]);
+
     return (
-        <div ref={containerRef} style={{ width: '100%', height: '100%', overflowY: 'auto', padding: '16px', background: '#ececec' }}>
-            <p style={{ textAlign: 'center', padding: '20px' }}>Loading PDF natively...</p>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, padding: '10px', background: '#f0f1f4', borderBottom: '1px solid var(--border)' }}>
+                 <button onClick={() => setZoom(z => Math.max(50, z - 25))} style={{ width: 36, height: 36, borderRadius: '50%', background: '#fff', border: '1px solid #ccc', fontSize: '1.2rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>-</button>
+                 <span style={{ fontWeight: '800', width: '60px', textAlign: 'center', fontSize: '0.95rem', color: 'var(--text)' }}>{zoom}%</span>
+                 <button onClick={() => setZoom(z => Math.min(300, z + 25))} style={{ width: 36, height: 36, borderRadius: '50%', background: '#fff', border: '1px solid #ccc', fontSize: '1.2rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>+</button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', background: '#e0e0e0', padding: 16, textAlign: 'center' }}>
+                <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }} />
+            </div>
         </div>
     )
 }
