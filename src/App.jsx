@@ -3,10 +3,11 @@ import { parseReadme } from './data/parseProducts'
 import readmeRaw from '../data.md?raw'
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
-import { savePDFToLocal, getLocalHistory, deleteLocalPDF, renameLocalPDF, saveCustomPdf, getCustomPdfs, deleteCustomPdf, saveMrpOverride, getMrpOverrides, saveCustomProduct, getCustomProducts, saveClientBill, getClients, updateClientPayment, createManualClient, addManualBill, editClientRecord, deleteClientRecord, saveBillDetails, getBillDetails, saveDailyNote as saveDailyNoteLocal, getDailyNotes as getDailyNotesLocal, exportAllData, importAllData } from './idb'
+import { savePDFToLocal, getLocalHistory, deleteLocalPDF, renameLocalPDF, saveCustomPdf, getCustomPdfs, deleteCustomPdf, saveMrpOverride, getMrpOverrides, saveCustomProduct, getCustomProducts, saveClientBill, getClients, updateClientPayment, createManualClient, addManualBill, editClientRecord, deleteClientRecord, saveBillDetails, getBillDetails, saveDailyNote as saveDailyNoteLocal, getDailyNotes as getDailyNotesLocal, exportAllData, importAllData, saveManualSale, getManualSales, deleteManualSale, deleteLocalDailyNote } from './idb'
 
 import { isNative, openBundledPdf, saveAndOpenPdf, saveToDevice, openWithNativeViewer } from './nativePdf'
-import { queueSync, restoreFromCloud, saveBillToCloud, saveOrderToCloud, fetchDailySales, saveDailyNoteToCloud, addSyncListener, removeSyncListener, checkApiHealth } from './api'
+import { queueSync, restoreFromCloud, saveBillToCloud, saveOrderToCloud, fetchDailySales, saveDailyNoteToCloud, addSyncListener, removeSyncListener, checkApiHealth, saveManualSaleToCloud, deleteManualSaleFromCloud, deleteNoteFromCloud } from './api'
+import { sendBillEmail, sendOrderEmail, sendDailySalesEmail, sendHistoryPdfEmail } from './emailService'
 
 // Error Boundary like check
 if (typeof window !== 'undefined') {
@@ -134,6 +135,10 @@ export default function App() {
     const [dailyNotes, setDailyNotes] = useState({})
     const [dailyNoteEditing, setDailyNoteEditing] = useState({})
     const [isLoadingSales, setIsLoadingSales] = useState(false)
+    const [manualSaleModal, setManualSaleModal] = useState(false)
+    const [manualSaleForm, setManualSaleForm] = useState({ date: '', pieces: '', amount: '', notes: '' })
+    const [manualSalesList, setManualSalesList] = useState([])
+    const [emailSending, setEmailSending] = useState(false)
     const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2000) }
 
     // Trigger cloud sync after data changes
@@ -232,6 +237,23 @@ export default function App() {
                 const notes = await getDailyNotesLocal();
                 setDailyNotes(notes);
             } catch (e) { console.error('Failed to load daily notes:', e); }
+
+            // Load manual sales from local
+            try {
+                const mSales = await getManualSales();
+                setManualSalesList(mSales);
+            } catch (e) { console.error('Failed to load manual sales:', e); }
+
+            // Midnight auto-sales check: if the day has changed, reload sales
+            try {
+                const today = new Date().toISOString().split('T')[0];
+                const lastDate = localStorage.getItem('hawkins_last_open_date');
+                if (lastDate && lastDate !== today) {
+                    // New day detected — the sales tab will auto-update when opened
+                    console.log('New day detected. Daily sales will refresh on Sales tab open.');
+                }
+                localStorage.setItem('hawkins_last_open_date', today);
+            } catch (e) { /* ignore localStorage errors */ }
         })();
 
         return () => removeSyncListener(onSyncStatus);
@@ -622,12 +644,20 @@ export default function App() {
             try { await saveOrderToCloud(orderDetailRecord); } catch(e) { console.error('Cloud order save error:', e); }
             triggerCloudSync();
 
+            // Auto-send order email
+            try {
+                await sendOrderEmail(orderDetailRecord);
+                setToast('📧 Order emailed to you!');
+            } catch(emailErr) {
+                console.warn('Order email failed (non-critical):', emailErr);
+            }
+
             if (isNative()) {
                 await saveAndOpenPdf(filename, pdfBlob)
-                setToast('Opening Order...')
+                if (!toast) setToast('Opening Order...')
             } else {
                 doc.save(filename)
-                setToast('Downloaded PDF')
+                if (!toast) setToast('Downloaded PDF')
             }
         } catch (e) {
             console.error(e)
@@ -776,12 +806,20 @@ export default function App() {
             try { await saveBillToCloud(billDetailRecord); } catch(e) { console.error('Cloud bill save error:', e); }
             triggerCloudSync();
 
+            // Auto-send bill email
+            try {
+                await sendBillEmail(billDetailRecord);
+                setToast('📧 Bill emailed to you!');
+            } catch(emailErr) {
+                console.warn('Bill email failed (non-critical):', emailErr);
+            }
+
             if (isNative()) {
                 await saveAndOpenPdf(filename, pdfBlob)
-                setToast('Opening Bill...')
+                if (!toast) setToast('Opening Bill...')
             } else {
                 doc.save(filename)
-                setToast('Downloaded PDF')
+                if (!toast) setToast('Downloaded PDF')
             }
         } catch (e) {
             console.error(e)
@@ -923,12 +961,19 @@ export default function App() {
             try { await saveBillToCloud(billDetailRecord); } catch(e) { console.error(e); }
             triggerCloudSync();
 
+            // Auto-send bill email
+            try {
+                await sendBillEmail(billDetailRecord);
+            } catch(emailErr) {
+                console.warn('Bill email failed (non-critical):', emailErr);
+            }
+
             if (isNative()) {
                 await saveAndOpenPdf(filename, pdfBlob)
-                setToast('Opening Bill...')
+                setToast('📧 Bill emailed + Opening...')
             } else {
                 doc.save(filename)
-                setToast('Downloaded PDF')
+                setToast('📧 Bill PDF downloaded + Emailed!')
             }
         } catch (e) {
             console.error(e)
@@ -1146,9 +1191,28 @@ export default function App() {
                                             </div>
                                         </div>
                                     ))}
-                                    <button className="pdf-btn" onClick={savePDF}>
-                                        📄 View Order PDF
-                                    </button>
+                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                        <button className="pdf-btn" style={{ flex: 1 }} onClick={savePDF}>
+                                            📄 View Order PDF
+                                        </button>
+                                        <button className="pdf-btn email-btn" style={{ flex: 1 }} onClick={async () => {
+                                            if (orderedItems.length === 0) return showToast('No items to email');
+                                            setEmailSending(true);
+                                            try {
+                                                const now = new Date();
+                                                const todayStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                                                const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+                                                const lineItems = orderedItems.map(item => ({ name: item.name, code: item.code, brand: item.brand || 'Hawkins', type: item.type, qty: item.qty, pieces: item.type === 'box' ? (item.qty * (item.casePack || 1)) : item.qty }));
+                                                const totalBoxes = orderedItems.filter(i => i.type === 'box').reduce((a,i) => a + i.qty, 0);
+                                                const totalPieces = orderedItems.filter(i => i.type === 'pcs').reduce((a,i) => a + i.qty, 0);
+                                                await sendOrderEmail({ date: todayStr, dateKey, totalBoxes, totalPieces, lineItems });
+                                                showToast('📧 Order emailed!');
+                                            } catch(e) { showToast('❌ Email failed. Check connection.'); }
+                                            setEmailSending(false);
+                                        }} disabled={emailSending}>
+                                            {emailSending ? '⏳ Sending...' : '📧 Send as Email'}
+                                        </button>
+                                    </div>
                                 </>
                             )}
                         </div>
@@ -1242,12 +1306,31 @@ export default function App() {
                                             return acc + Math.round(r * (1 - (parseFloat(bData.discount) || 0) / 100))
                                         }, 0)}</span>
                                     </div>
-                                    <div style={{ display: 'flex', gap: 8 }}>
+                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                         <button className="pdf-btn" style={{ flex: 1 }} onClick={saveBillPDF}>
                                             📄 View Bill PDF
                                         </button>
                                         <button className="pdf-btn" style={{ flex: 1, background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7' }} onClick={saveBillWithDiscountPDF}>
                                             📄 Bill (Discount)
+                                        </button>
+                                        <button className="pdf-btn email-btn" style={{ flex: 1 }} onClick={async () => {
+                                            if (orderedItems.length === 0 && customBillItems.length === 0) return showToast('No items to email');
+                                            setEmailSending(true);
+                                            try {
+                                                const now = new Date();
+                                                const todayStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                                                const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+                                                let gt = 0;
+                                                const lineItems = [
+                                                    ...orderedItems.map(item => { const bd = billInputs[item.id]||{}; const u = item.type==='box'?(item.qty*(item.casePack||1)):item.qty; const fp = Math.round(u*(parseFloat(bd.mrp)||0)*(1-(parseFloat(bd.discount)||0)/100)); gt+=fp; return { name: item.name, code: item.code, brand: item.brand||'Hawkins', type: item.type, qty: item.qty, pieces: u, mrp: parseFloat(bd.mrp)||0, finalPrice: fp }; }),
+                                                    ...customBillItems.map(cbi => { const u = (parseInt(cbi.pcsQty)||0)+(parseInt(cbi.boxQty)||0); const fp = Math.round(u*(parseFloat(cbi.mrp)||0)*(1-(parseFloat(cbi.discount)||0)/100)); gt+=fp; return { name: cbi.name, code: cbi.code||'-', brand: 'Custom', type: 'pcs', qty: u, pieces: u, mrp: parseFloat(cbi.mrp)||0, finalPrice: fp }; })
+                                                ];
+                                                await sendBillEmail({ customerName: customerName||'Walk-in', date: todayStr, dateKey, grandTotal: gt, totalBoxes: 0, totalPieces: 0, lineItems });
+                                                showToast('📧 Bill emailed!');
+                                            } catch(e) { showToast('❌ Email failed. Check connection.'); }
+                                            setEmailSending(false);
+                                        }} disabled={emailSending}>
+                                            {emailSending ? '⏳ Sending...' : '📧 Send as Email'}
                                         </button>
                                     </div>
                                 </div>
@@ -1287,6 +1370,14 @@ export default function App() {
                                             </div>
                                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                 <button onClick={() => setActivePdf({ name: file.name, src: file.data })} style={{ background: 'var(--blue-bg)', color: 'var(--blue)', padding: '6px 10px', border: '1px solid var(--blue)', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>View</button>
+                                                <button onClick={async () => {
+                                                    setEmailSending(true);
+                                                    try {
+                                                        await sendHistoryPdfEmail(file);
+                                                        showToast('📧 Email sent!');
+                                                    } catch(e) { showToast('❌ Email failed'); }
+                                                    setEmailSending(false);
+                                                }} style={{ background: '#e3f2fd', color: '#1565c0', padding: '6px 10px', border: '1px solid #90caf9', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }} disabled={emailSending}>📧 Email</button>
                                                 {file.extraData && file.type === 'Local' ? (
                                                     <button onClick={() => {
                                                         const d = file.extraData;
@@ -1622,7 +1713,14 @@ export default function App() {
                         <div className="sales-container">
                             <div className="sales-header">
                                 <h2>📊 Daily Sales</h2>
-                                <button className="sales-export-btn" onClick={async () => {
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                    <button className="sales-export-btn" style={{ background: 'var(--green)', color: '#fff', border: 'none' }} onClick={() => {
+                                        const now = new Date();
+                                        const todayStr = now.toISOString().split('T')[0];
+                                        setManualSaleForm({ date: todayStr, pieces: '', amount: '', notes: '' });
+                                        setManualSaleModal(true);
+                                    }}>+ Add Sales</button>
+                                    <button className="sales-export-btn" onClick={async () => {
                                     try {
                                         showToast('Generating report...');
                                         const doc = new jsPDF();
@@ -1661,6 +1759,17 @@ export default function App() {
                                         showToast('Report generated!');
                                     } catch(e) { console.error(e); showToast('Failed to generate report'); }
                                 }}>📄 Export Report</button>
+                                    <button className="sales-export-btn email-btn" onClick={async () => {
+                                        if (dailySalesData.length === 0) return showToast('No sales data to email');
+                                        setEmailSending(true);
+                                        try {
+                                            const today = dailySalesData[0];
+                                            await sendDailySalesEmail(today);
+                                            showToast('📧 Sales report emailed!');
+                                        } catch(e) { showToast('❌ Email failed'); }
+                                        setEmailSending(false);
+                                    }} disabled={emailSending}>{emailSending ? '⏳...' : '📧 Email Report'}</button>
+                                </div>
                             </div>
 
                             {isLoadingSales ? (
@@ -1758,17 +1867,31 @@ export default function App() {
                                                             value={dailyNoteEditing[day.dateKey] !== undefined ? dailyNoteEditing[day.dateKey] : (dailyNotes[day.dateKey] || '')}
                                                             onChange={e => setDailyNoteEditing(p => ({ ...p, [day.dateKey]: e.target.value }))}
                                                         />
-                                                        <button className="sales-note-save" onClick={async () => {
-                                                            const noteText = dailyNoteEditing[day.dateKey];
-                                                            if (noteText === undefined) return;
-                                                            try {
-                                                                await saveDailyNoteLocal(day.dateKey, noteText);
-                                                                try { await saveDailyNoteToCloud(day.dateKey, noteText); } catch(e) {}
-                                                                setDailyNotes(p => ({ ...p, [day.dateKey]: noteText }));
-                                                                setDailyNoteEditing(p => { const n = {...p}; delete n[day.dateKey]; return n; });
-                                                                showToast('Note saved!');
-                                                            } catch(e) { showToast('Failed to save note'); }
-                                                        }}>💾 Save Note</button>
+                                                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                                            <button className="sales-note-save" style={{ flex: 1 }} onClick={async () => {
+                                                                const noteText = dailyNoteEditing[day.dateKey];
+                                                                if (noteText === undefined) return;
+                                                                try {
+                                                                    await saveDailyNoteLocal(day.dateKey, noteText);
+                                                                    try { await saveDailyNoteToCloud(day.dateKey, noteText); } catch(e) {}
+                                                                    setDailyNotes(p => ({ ...p, [day.dateKey]: noteText }));
+                                                                    setDailyNoteEditing(p => { const n = {...p}; delete n[day.dateKey]; return n; });
+                                                                    showToast('Note saved!');
+                                                                } catch(e) { showToast('Failed to save note'); }
+                                                            }}>💾 Save Note</button>
+                                                            {(dailyNotes[day.dateKey] || dailyNoteEditing[day.dateKey]) && (
+                                                                <button className="sales-note-save" style={{ flex: 0, background: '#ffebee', color: '#d32f2f', border: '1px solid #ffcdd2' }} onClick={async () => {
+                                                                    if (!window.confirm('Delete this note?')) return;
+                                                                    try {
+                                                                        await deleteLocalDailyNote(day.dateKey);
+                                                                        try { await deleteNoteFromCloud(day.dateKey); } catch(e) {}
+                                                                        setDailyNotes(p => { const n = {...p}; delete n[day.dateKey]; return n; });
+                                                                        setDailyNoteEditing(p => { const n = {...p}; delete n[day.dateKey]; return n; });
+                                                                        showToast('Note deleted!');
+                                                                    } catch(e) { showToast('Failed to delete note'); }
+                                                                }}>🗑 Delete</button>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             )}
@@ -1776,6 +1899,35 @@ export default function App() {
                                     );
                                 })
                             )}
+                        </div>
+                    )}
+
+                    {/* Manual Sale entries from manualSalesList shown at bottom of Sales tab */}
+                    {tab === 'sales' && manualSalesList.length > 0 && (
+                        <div style={{ padding: '0 16px 16px' }}>
+                            <h3 style={{ fontSize: '0.95rem', color: 'var(--text2)', marginBottom: 10 }}>📋 Manual Sales Entries</h3>
+                            {manualSalesList.sort((a,b) => b.timestamp - a.timestamp).map(sale => (
+                                <div key={sale.saleId} style={{ background: '#f8f8f8', border: '1px solid var(--border)', borderRadius: 8, padding: '12px', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>📅 {sale.date}</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#555', marginTop: 2 }}>{sale.pieces} pieces · ₹{sale.amount}</div>
+                                        {sale.notes && <div style={{ fontSize: '0.75rem', color: '#888', marginTop: 2 }}>📝 {sale.notes}</div>}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        <span style={{ background: '#e8f5e9', color: '#2e7d32', fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: 10 }}>Manual</span>
+                                        <button onClick={async () => {
+                                            if (!window.confirm('Delete this sale?')) return;
+                                            try {
+                                                await deleteManualSale(sale.saleId);
+                                                try { await deleteManualSaleFromCloud(sale.saleId); } catch(e) {}
+                                                const updated = await getManualSales();
+                                                setManualSalesList(updated);
+                                                showToast('Sale deleted!');
+                                            } catch(e) { showToast('Failed to delete'); }
+                                        }} style={{ background: '#ffebee', color: '#d32f2f', border: '1px solid #ffcdd2', padding: '4px 8px', borderRadius: 6, fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>🗑</button>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
@@ -1790,6 +1942,65 @@ export default function App() {
                     </div>
                 )}
             </div>
+
+            {/* Manual Sale Modal */}
+            {manualSaleModal && (
+                <div className="img-overlay" onClick={() => setManualSaleModal(false)}>
+                    <div className="img-modal" style={{ textAlign: 'left' }} onClick={e => e.stopPropagation()}>
+                        <h3 style={{ marginBottom: 16 }}>➕ Add Manual Sale</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            <div>
+                                <label style={{ fontSize: '0.8rem', color: '#666', marginBottom: 4, display: 'block' }}>Date</label>
+                                <input type="date" className="search-input" style={{ width: '100%', padding: '10px' }} value={manualSaleForm.date} onChange={e => setManualSaleForm({ ...manualSaleForm, date: e.target.value })} />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                <div>
+                                    <label style={{ fontSize: '0.8rem', color: '#666', marginBottom: 4, display: 'block' }}>Pieces Sold</label>
+                                    <input type="number" className="search-input" style={{ width: '100%', padding: '10px' }} placeholder="0" value={manualSaleForm.pieces} onChange={e => setManualSaleForm({ ...manualSaleForm, pieces: e.target.value })} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.8rem', color: '#666', marginBottom: 4, display: 'block' }}>Amount (₹)</label>
+                                    <input type="number" className="search-input" style={{ width: '100%', padding: '10px' }} placeholder="0" value={manualSaleForm.amount} onChange={e => setManualSaleForm({ ...manualSaleForm, amount: e.target.value })} />
+                                </div>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '0.8rem', color: '#666', marginBottom: 4, display: 'block' }}>Notes (Optional)</label>
+                                <textarea className="sales-note-area" placeholder="e.g. Festival sale, bulk order..." value={manualSaleForm.notes} onChange={e => setManualSaleForm({ ...manualSaleForm, notes: e.target.value })} style={{ marginTop: 0 }} />
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                            <button className="img-modal-close" style={{ flex: 1, marginTop: 0, background: 'var(--text2)' }} onClick={() => setManualSaleModal(false)}>Cancel</button>
+                            <button className="img-modal-close" style={{ flex: 1, marginTop: 0, background: 'var(--green)' }} onClick={async () => {
+                                if (!manualSaleForm.date) return showToast('Please select a date');
+                                const pieces = parseInt(manualSaleForm.pieces) || 0;
+                                const amount = parseFloat(manualSaleForm.amount) || 0;
+                                if (pieces === 0 && amount === 0) return showToast('Enter pieces or amount');
+                                const ts = new Date(manualSaleForm.date).getTime();
+                                const dateObj = new Date(manualSaleForm.date);
+                                const humanDate = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                                const saleRecord = {
+                                    saleId: `manual-${Date.now()}`,
+                                    dateKey: manualSaleForm.date,
+                                    date: humanDate,
+                                    pieces,
+                                    amount,
+                                    notes: manualSaleForm.notes || '',
+                                    timestamp: ts,
+                                };
+                                try {
+                                    await saveManualSale(saleRecord);
+                                    try { await saveManualSaleToCloud(saleRecord); } catch(e) {}
+                                    const updated = await getManualSales();
+                                    setManualSalesList(updated);
+                                    setManualSaleModal(false);
+                                    setManualSaleForm({ date: '', pieces: '', amount: '', notes: '' });
+                                    showToast('✅ Manual sale added!');
+                                } catch(e) { showToast('Failed to save sale'); }
+                            }}>Save Sale</button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Custom PDF Modal */}
             {pdfModal && (

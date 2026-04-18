@@ -176,3 +176,38 @@ export const checkApiHealth = async () => {
         return false;
     }
 };
+
+// ---- Manual Sales ----
+
+/**
+ * Save a manual sale entry to cloud.
+ */
+export const saveManualSaleToCloud = async (saleData) => {
+    return apiCall('/api/manual-sales', {
+        method: 'POST',
+        body: JSON.stringify(saleData)
+    });
+};
+
+/**
+ * Fetch all manual sales from cloud.
+ */
+export const fetchManualSalesFromCloud = async () => {
+    const result = await apiCall('/api/manual-sales');
+    return result.sales || [];
+};
+
+/**
+ * Delete a manual sale from cloud.
+ */
+export const deleteManualSaleFromCloud = async (saleId) => {
+    return apiCall(`/api/manual-sales/${saleId}`, { method: 'DELETE' });
+};
+
+/**
+ * Delete a daily note from cloud.
+ */
+export const deleteNoteFromCloud = async (dateKey) => {
+    return apiCall(`/api/daily-notes/${encodeURIComponent(dateKey)}`, { method: 'DELETE' });
+};
+

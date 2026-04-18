@@ -1,6 +1,6 @@
 export const initDB = () => {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('HawkinsDB', 4)
+        const request = indexedDB.open('HawkinsDB', 5)
         request.onupgradeneeded = (e) => {
             const db = e.target.result
             if (!db.objectStoreNames.contains('pdfs')) {
@@ -18,13 +18,17 @@ export const initDB = () => {
             if (!db.objectStoreNames.contains('customProducts')) {
                 db.createObjectStore('customProducts', { keyPath: 'id' })
             }
-            // NEW: Detailed bill records for daily sales tracking
+            // Detailed bill records for daily sales tracking
             if (!db.objectStoreNames.contains('billDetails')) {
                 db.createObjectStore('billDetails', { keyPath: 'billId' })
             }
-            // NEW: Daily notes
+            // Daily notes
             if (!db.objectStoreNames.contains('dailyNotes')) {
                 db.createObjectStore('dailyNotes', { keyPath: 'dateKey' })
+            }
+            // NEW v5: Manual sales entries
+            if (!db.objectStoreNames.contains('manualSales')) {
+                db.createObjectStore('manualSales', { keyPath: 'saleId' })
             }
         }
         request.onsuccess = () => resolve(request.result)
@@ -542,4 +546,53 @@ export const importAllData = async (data) => {
     }
 
     return true;
+}
+
+// =========================================
+// NEW v5: Manual Sales Entries
+// =========================================
+
+export const saveManualSale = async (saleRecord) => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('manualSales', 'readwrite')
+        const store = tx.objectStore('manualSales')
+        const req = store.put(saleRecord)
+        req.onsuccess = () => resolve(true)
+        req.onerror = () => reject(req.error)
+    })
+}
+
+export const getManualSales = async () => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('manualSales', 'readonly')
+        const store = tx.objectStore('manualSales')
+        const req = store.getAll()
+        req.onsuccess = () => resolve(req.result || [])
+        req.onerror = () => reject(req.error)
+    })
+}
+
+export const deleteManualSale = async (saleId) => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('manualSales', 'readwrite')
+        const store = tx.objectStore('manualSales')
+        const req = store.delete(saleId)
+        req.onsuccess = () => resolve(true)
+        req.onerror = () => reject(req.error)
+    })
+}
+
+// Delete a daily note
+export const deleteLocalDailyNote = async (dateKey) => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('dailyNotes', 'readwrite')
+        const store = tx.objectStore('dailyNotes')
+        const req = store.delete(dateKey)
+        req.onsuccess = () => resolve(true)
+        req.onerror = () => reject(req.error)
+    })
 }

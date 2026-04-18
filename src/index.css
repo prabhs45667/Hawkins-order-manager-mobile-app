@@ -1382,3 +1382,47 @@ body {
   font-weight: 700;
   color: var(--accent);
 }
+
+/* Email Button */
+.email-btn {
+  background: #e3f2fd !important;
+  color: #1565c0 !important;
+  border: 1px solid #90caf9 !important;
+}
+
+.email-btn:hover {
+  background: #bbdefb !important;
+}
+
+.email-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Sales header with multiple buttons */
+.sales-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sales-header > div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Note buttons row */
+.sales-note-save {
+  padding: 8px 14px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: var(--blue);
+  color: #fff;
+  transition: opacity 0.15s;
+}

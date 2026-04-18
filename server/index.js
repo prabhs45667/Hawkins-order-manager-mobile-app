@@ -7,6 +7,8 @@ const AppData = require('./models/AppData');
 const BillRecord = require('./models/BillRecord');
 const OrderRecord = require('./models/OrderRecord');
 const DailyNote = require('./models/DailyNote');
+const ManualSale = require('./models/ManualSale');
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -238,7 +240,59 @@ app.get('/api/daily-notes', async (req, res) => {
     }
 });
 
+// DELETE a daily note by dateKey
+app.delete('/api/daily-notes/:dateKey', async (req, res) => {
+    try {
+        const { dateKey } = req.params;
+        await DailyNote.deleteOne({ dateKey });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Daily note delete error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==========================================
+// MANUAL SALES (User-added sales entries)
+// ==========================================
+app.post('/api/manual-sales', async (req, res) => {
+    try {
+        const saleData = req.body;
+        const sale = await ManualSale.findOneAndUpdate(
+            { saleId: saleData.saleId },
+            saleData,
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        res.json({ success: true, sale });
+    } catch (err) {
+        console.error('Manual sale save error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/manual-sales', async (req, res) => {
+    try {
+        const sales = await ManualSale.find({}).sort({ timestamp: -1 }).lean();
+        res.json({ success: true, sales });
+    } catch (err) {
+        console.error('Manual sales fetch error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/manual-sales/:saleId', async (req, res) => {
+    try {
+        const { saleId } = req.params;
+        await ManualSale.deleteOne({ saleId });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Manual sale delete error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Hawkins API running on port ${PORT}`);
 });
+
