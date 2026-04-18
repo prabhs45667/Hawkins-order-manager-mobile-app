@@ -596,6 +596,32 @@ export default function App() {
             const extraData = { orders, customItems };
             await savePDFToLocal(filename, pdfBlob, 'Order', extraData)
 
+            // 2. Save Order to Daily Sales (MongoDB billrecords)
+            const nowTs = Date.now();
+            const now = new Date();
+            const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+            
+            const lineItems = orderedItems.map((item) => {
+                const totalUnits = item.type === 'box' ? (item.qty * (item.casePack || 1)) : item.qty;
+                return { name: item.name, code: item.code, brand: item.brand || 'Hawkins', type: item.type, qty: item.qty, pieces: totalUnits, mrp: 0, finalPrice: 0 };
+            });
+
+            const orderDetailRecord = {
+                billId: `order-${nowTs}`,
+                customerName: 'Order (Unbilled)',
+                date: today,
+                dateKey,
+                timestamp: nowTs,
+                grandTotal: 0,
+                totalBoxes: totalBoxes,
+                totalPieces: totalPieces,
+                lineItems
+            };
+
+            try { await saveBillDetails(orderDetailRecord); } catch(e) { console.error('Local order save error:', e); }
+            try { await saveBillToCloud(orderDetailRecord); } catch(e) { console.error('Cloud order save error:', e); }
+            triggerCloudSync();
+
             if (isNative()) {
                 await saveAndOpenPdf(filename, pdfBlob)
                 setToast('Opening Order...')
