@@ -5,6 +5,7 @@ const cors = require('cors');
 
 const AppData = require('./models/AppData');
 const BillRecord = require('./models/BillRecord');
+const OrderRecord = require('./models/OrderRecord');
 const DailyNote = require('./models/DailyNote');
 
 const app = express();
@@ -27,6 +28,36 @@ mongoose.connect(process.env.MONGODB_URI)
 // ==========================================
 app.get('/', (req, res) => {
     res.json({ status: 'ok', message: 'Hawkins API Server Running', timestamp: new Date().toISOString() });
+});
+
+// ==========================================
+// ORDER RECORDS (Quotes distinct from Bills)
+// ==========================================
+app.post('/api/orders', async (req, res) => {
+    try {
+        const orderData = req.body;
+        const order = await OrderRecord.findOneAndUpdate(
+            { orderId: orderData.orderId },
+            orderData,
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        res.json({ success: true, order });
+    } catch (err) {
+        console.error('Order save error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/orders', async (req, res) => {
+    try {
+        const { dateKey } = req.query;
+        const filter = dateKey ? { dateKey } : {};
+        const orders = await OrderRecord.find(filter).sort({ timestamp: -1 }).lean();
+        res.json({ success: true, orders });
+    } catch (err) {
+        console.error('Orders fetch error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 // ==========================================

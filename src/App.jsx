@@ -6,7 +6,7 @@ import 'jspdf-autotable'
 import { savePDFToLocal, getLocalHistory, deleteLocalPDF, renameLocalPDF, saveCustomPdf, getCustomPdfs, deleteCustomPdf, saveMrpOverride, getMrpOverrides, saveCustomProduct, getCustomProducts, saveClientBill, getClients, updateClientPayment, createManualClient, addManualBill, editClientRecord, deleteClientRecord, saveBillDetails, getBillDetails, saveDailyNote as saveDailyNoteLocal, getDailyNotes as getDailyNotesLocal, exportAllData, importAllData } from './idb'
 
 import { isNative, openBundledPdf, saveAndOpenPdf, saveToDevice, openWithNativeViewer } from './nativePdf'
-import { queueSync, restoreFromCloud, saveBillToCloud, fetchDailySales, saveDailyNoteToCloud, addSyncListener, removeSyncListener, checkApiHealth } from './api'
+import { queueSync, restoreFromCloud, saveBillToCloud, saveOrderToCloud, fetchDailySales, saveDailyNoteToCloud, addSyncListener, removeSyncListener, checkApiHealth } from './api'
 
 // Error Boundary like check
 if (typeof window !== 'undefined') {
@@ -607,7 +607,7 @@ export default function App() {
             });
 
             const orderDetailRecord = {
-                billId: `order-${nowTs}`,
+                orderId: `order-${nowTs}`,
                 customerName: 'Order (Unbilled)',
                 date: today,
                 dateKey,
@@ -619,7 +619,7 @@ export default function App() {
             };
 
             try { await saveBillDetails(orderDetailRecord); } catch(e) { console.error('Local order save error:', e); }
-            try { await saveBillToCloud(orderDetailRecord); } catch(e) { console.error('Cloud order save error:', e); }
+            try { await saveOrderToCloud(orderDetailRecord); } catch(e) { console.error('Cloud order save error:', e); }
             triggerCloudSync();
 
             if (isNative()) {

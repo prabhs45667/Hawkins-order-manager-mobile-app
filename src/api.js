@@ -62,6 +62,16 @@ export const saveBillToCloud = async (billRecord) => {
 };
 
 /**
+ * Save a pure Order record (Quote) separately from bills.
+ */
+export const saveOrderToCloud = async (orderRecord) => {
+    return apiCall('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderRecord)
+    });
+};
+
+/**
  * Fetch all bills (optionally by date).
  */
 export const fetchBillsFromCloud = async (dateKey) => {
