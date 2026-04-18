@@ -1023,3 +1023,362 @@ body {
   color: var(--blue);
   border: 1px solid var(--blue);
 }
+
+/* ============================================ */
+/* SYNC STATUS INDICATOR                        */
+/* ============================================ */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.sync-indicator.synced {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.sync-indicator.syncing {
+  color: var(--orange);
+  background: var(--orange-bg);
+  animation: syncPulse 1.2s ease infinite;
+}
+
+.sync-indicator.pending {
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+
+.sync-indicator.error {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.sync-indicator.offline {
+  color: var(--text3);
+  background: var(--bg2);
+}
+
+@keyframes syncPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sync-indicator.synced .sync-dot { background: var(--green); }
+.sync-indicator.syncing .sync-dot { background: var(--orange); }
+.sync-indicator.pending .sync-dot { background: var(--blue); }
+.sync-indicator.error .sync-dot { background: var(--accent); }
+.sync-indicator.offline .sync-dot { background: var(--text3); }
+
+/* ============================================ */
+/* DAILY SALES TAB                              */
+/* ============================================ */
+.sales-container {
+  padding: 16px;
+}
+
+.sales-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.sales-header h2 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.sales-export-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.sales-export-btn:active {
+  opacity: 0.85;
+}
+
+.sales-day-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+
+.sales-day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #f8f9fa, #ffffff);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.sales-day-header:active {
+  background: var(--bg);
+}
+
+.sales-day-date {
+  display: flex;
+  flex-direction: column;
+}
+
+.sales-day-date-main {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sales-day-date-sub {
+  font-size: 0.72rem;
+  color: var(--text3);
+  margin-top: 2px;
+}
+
+.sales-day-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.sales-day-pieces {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--accent);
+  background: var(--accent-bg);
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+
+.sales-day-bills {
+  font-size: 0.72rem;
+  color: var(--text3);
+  font-weight: 600;
+}
+
+.sales-day-chevron {
+  color: var(--text3);
+  transition: transform 0.25s;
+  font-size: 0.7rem;
+  margin-left: 6px;
+}
+
+.sales-day-chevron.open {
+  transform: rotate(180deg);
+}
+
+.sales-day-detail {
+  padding: 14px 16px;
+}
+
+.sales-detail-section {
+  margin-bottom: 14px;
+}
+
+.sales-detail-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.sales-product-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sales-product-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.sales-product-name {
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+.sales-product-qty {
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.sales-brand-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sales-brand-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+
+.sales-brand-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sales-brand-count {
+  font-weight: 800;
+}
+
+/* Brand colors */
+.brand-hawkins { background: #ffebee; border-color: #ffcdd2; }
+.brand-hawkins .sales-brand-dot { background: #d32f2f; }
+.brand-hawkins .sales-brand-count { color: #d32f2f; }
+
+.brand-prestige { background: #e3f2fd; border-color: #bbdefb; }
+.brand-prestige .sales-brand-dot { background: #1565c0; }
+.brand-prestige .sales-brand-count { color: #1565c0; }
+
+.brand-other { background: #f3e5f5; border-color: #e1bee7; }
+.brand-other .sales-brand-dot { background: #7b1fa2; }
+.brand-other .sales-brand-count { color: #7b1fa2; }
+
+/* Daily Notes */
+.sales-note-area {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+  transition: border-color 0.2s;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.sales-note-area:focus {
+  border-color: var(--blue);
+  background: var(--white);
+}
+
+.sales-note-save {
+  margin-top: 8px;
+  padding: 8px 16px;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sales-note-save:active {
+  opacity: 0.85;
+}
+
+/* Sales Amount Row */
+.sales-amount-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--green-bg);
+  border-radius: 6px;
+  font-weight: 700;
+  border: 1px solid #c8e6c9;
+}
+
+.sales-amount-label {
+  color: var(--green);
+  font-size: 0.82rem;
+}
+
+.sales-amount-val {
+  color: var(--green);
+  font-size: 0.95rem;
+}
+
+/* Empty state */
+.sales-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text3);
+}
+
+.sales-empty-icon {
+  font-size: 3rem;
+  margin-bottom: 14px;
+  opacity: 0.3;
+}
+
+.sales-empty p {
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+/* Sales Bills List inside day card */
+.sales-bill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.sales-bill-customer {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sales-bill-amount {
+  font-weight: 700;
+  color: var(--accent);
+}

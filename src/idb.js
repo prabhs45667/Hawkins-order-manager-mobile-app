@@ -1,6 +1,6 @@
 export const initDB = () => {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('HawkinsDB', 3)
+        const request = indexedDB.open('HawkinsDB', 4)
         request.onupgradeneeded = (e) => {
             const db = e.target.result
             if (!db.objectStoreNames.contains('pdfs')) {
@@ -17,6 +17,14 @@ export const initDB = () => {
             }
             if (!db.objectStoreNames.contains('customProducts')) {
                 db.createObjectStore('customProducts', { keyPath: 'id' })
+            }
+            // NEW: Detailed bill records for daily sales tracking
+            if (!db.objectStoreNames.contains('billDetails')) {
+                db.createObjectStore('billDetails', { keyPath: 'billId' })
+            }
+            // NEW: Daily notes
+            if (!db.objectStoreNames.contains('dailyNotes')) {
+                db.createObjectStore('dailyNotes', { keyPath: 'dateKey' })
             }
         }
         request.onsuccess = () => resolve(request.result)
@@ -407,4 +415,131 @@ export const deleteClientRecord = async (clientName, type, timestamp) => {
         }
         getReq.onerror = () => reject(getReq.error)
     })
+}
+
+// =========================================
+// NEW: Bill Details (for daily sales tracking)
+// =========================================
+
+export const saveBillDetails = async (billRecord) => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('billDetails', 'readwrite')
+        const store = tx.objectStore('billDetails')
+        const req = store.put(billRecord)
+        req.onsuccess = () => resolve(true)
+        req.onerror = () => reject(req.error)
+    })
+}
+
+export const getBillDetails = async () => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('billDetails', 'readonly')
+        const store = tx.objectStore('billDetails')
+        const req = store.getAll()
+        req.onsuccess = () => resolve(req.result || [])
+        req.onerror = () => reject(req.error)
+    })
+}
+
+// =========================================
+// NEW: Daily Notes
+// =========================================
+
+export const saveDailyNote = async (dateKey, note) => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('dailyNotes', 'readwrite')
+        const store = tx.objectStore('dailyNotes')
+        const req = store.put({ dateKey, note, updatedAt: Date.now() })
+        req.onsuccess = () => resolve(true)
+        req.onerror = () => reject(req.error)
+    })
+}
+
+export const getDailyNotes = async () => {
+    const db = await initDB()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('dailyNotes', 'readonly')
+        const store = tx.objectStore('dailyNotes')
+        const req = store.getAll()
+        req.onsuccess = () => {
+            const map = {}
+            ;(req.result || []).forEach(r => { map[r.dateKey] = r.note })
+            resolve(map)
+        }
+        req.onerror = () => reject(req.error)
+    })
+}
+
+// =========================================
+// NEW: Export / Import All Data (for cloud sync)
+// =========================================
+
+/**
+ * Export all structured data from IndexedDB for cloud backup.
+ * Does NOT include PDF blobs (too large for API).
+ */
+export const exportAllData = async () => {
+    const clients = await getClients();
+    const customProducts = await getCustomProducts();
+    const mrpOverrides = await getMrpOverrides();
+    const customPdfsList = await getCustomPdfs();
+    const customPdfNames = customPdfsList.map(p => p.name);
+
+    return {
+        clients,
+        customProducts,
+        mrpOverrides,
+        customPdfNames
+    };
+}
+
+/**
+ * Import all data from cloud backup into IndexedDB.
+ * REPLACES local data with cloud data.
+ */
+export const importAllData = async (data) => {
+    if (!data) return;
+    const db = await initDB();
+
+    // Import clients
+    if (data.clients && data.clients.length > 0) {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('clients', 'readwrite');
+            const store = tx.objectStore('clients');
+            // Clear first, then import
+            store.clear();
+            data.clients.forEach(c => store.put(c));
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    // Import custom products
+    if (data.customProducts && data.customProducts.length > 0) {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('customProducts', 'readwrite');
+            const store = tx.objectStore('customProducts');
+            store.clear();
+            data.customProducts.forEach(p => store.put(p));
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    // Import MRP overrides
+    if (data.mrpOverrides && Object.keys(data.mrpOverrides).length > 0) {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('mrpOverrides', 'readwrite');
+            const store = tx.objectStore('mrpOverrides');
+            store.clear();
+            Object.entries(data.mrpOverrides).forEach(([id, mrp]) => store.put({ id, mrp }));
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    return true;
 }

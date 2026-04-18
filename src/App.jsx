@@ -3,12 +3,10 @@ import { parseReadme } from './data/parseProducts'
 import readmeRaw from '../data.md?raw'
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
-import { savePDFToLocal, getLocalHistory, deleteLocalPDF, renameLocalPDF, saveCustomPdf, getCustomPdfs, deleteCustomPdf, saveMrpOverride, getMrpOverrides, saveCustomProduct, getCustomProducts, saveClientBill, getClients, updateClientPayment, createManualClient, addManualBill, editClientRecord, deleteClientRecord } from './idb'
+import { savePDFToLocal, getLocalHistory, deleteLocalPDF, renameLocalPDF, saveCustomPdf, getCustomPdfs, deleteCustomPdf, saveMrpOverride, getMrpOverrides, saveCustomProduct, getCustomProducts, saveClientBill, getClients, updateClientPayment, createManualClient, addManualBill, editClientRecord, deleteClientRecord, saveBillDetails, getBillDetails, saveDailyNote as saveDailyNoteLocal, getDailyNotes as getDailyNotesLocal, exportAllData, importAllData } from './idb'
 
 import { isNative, openBundledPdf, saveAndOpenPdf, saveToDevice, openWithNativeViewer } from './nativePdf'
-import { supabase, uploadPDFToSupabase, fetchSupabaseHistory } from './supabase'
-
-const SUPABASE_PDF_URL = 'https://mhjkjznotlrrtixiiwbi.supabase.co/storage/v1/object/public/pdfs/'
+import { queueSync, restoreFromCloud, saveBillToCloud, fetchDailySales, saveDailyNoteToCloud, addSyncListener, removeSyncListener, checkApiHealth } from './api'
 
 // Error Boundary like check
 if (typeof window !== 'undefined') {
@@ -109,11 +107,34 @@ export default function App() {
     const [editForm, setEditForm] = useState({ amount: '', date: '', time: '', reason: '' })
     const [clientModal, setClientModal] = useState(false)
     const [clientForm, setClientForm] = useState({ name: '' })
+    // Cloud Sync state
+    const [syncStatus, setSyncStatus] = useState('offline') // synced | syncing | pending | error | offline
+    // Daily Sales state
+    const [dailySalesData, setDailySalesData] = useState([])
+    const [openSalesDays, setOpenSalesDays] = useState({})
+    const [dailyNotes, setDailyNotes] = useState({})
+    const [dailyNoteEditing, setDailyNoteEditing] = useState({})
+    const [isLoadingSales, setIsLoadingSales] = useState(false)
     const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2000) }
 
-    // Load persistent custom PDFs and MRP overrides on mount
+    // Trigger cloud sync after data changes
+    const triggerCloudSync = useCallback(async () => {
+        try {
+            const data = await exportAllData();
+            queueSync(data);
+        } catch (e) {
+            console.error('Failed to queue cloud sync:', e);
+        }
+    }, []);
+
+    // Load persistent data on mount & attempt cloud restore if local is empty
     useEffect(() => {
+        // Listen for sync status changes
+        const onSyncStatus = (status) => setSyncStatus(status);
+        addSyncListener(onSyncStatus);
+
         (async () => {
+            let localHasData = false;
             try {
                 const saved = await getCustomPdfs();
                 if (saved && saved.length > 0) {
@@ -124,46 +145,144 @@ export default function App() {
                 const overrides = await getMrpOverrides();
                 if (overrides && Object.keys(overrides).length > 0) {
                     setMrpOverrides(overrides);
+                    localHasData = true;
                 }
             } catch (e) { console.error('Failed to load MRP overrides:', e); }
             try {
                 const savedProducts = await getCustomProducts();
                 if (savedProducts && savedProducts.length > 0) {
                     setCustomItems(savedProducts);
+                    localHasData = true;
                 }
             } catch (e) { console.error('Failed to load custom products:', e); }
             try {
                 const savedClients = await getClients();
+                if (savedClients && savedClients.length > 0) {
+                    localHasData = true;
+                }
                 setClientsList(savedClients);
             } catch (e) { console.error('Failed to load clients:', e); }
+
+            // If local DB is empty, try to restore from cloud
+            if (!localHasData) {
+                try {
+                    const isOnline = await checkApiHealth();
+                    if (isOnline) {
+                        showToast('🔄 Restoring data from cloud...');
+                        const cloudData = await restoreFromCloud();
+                        if (cloudData) {
+                            await importAllData(cloudData);
+                            // Reload from local after import
+                            const clients = await getClients();
+                            setClientsList(clients);
+                            const products = await getCustomProducts();
+                            setCustomItems(products);
+                            const overrides = await getMrpOverrides();
+                            setMrpOverrides(overrides);
+                            showToast('✅ Data restored from cloud!');
+                            setSyncStatus('synced');
+                        } else {
+                            setSyncStatus('synced');
+                        }
+                    } else {
+                        setSyncStatus('offline');
+                    }
+                } catch (e) {
+                    console.error('Cloud restore failed:', e);
+                    setSyncStatus('error');
+                }
+            } else {
+                // Local has data — do an initial sync to cloud
+                try {
+                    const isOnline = await checkApiHealth();
+                    if (isOnline) {
+                        setSyncStatus('synced');
+                        // Sync current local data to cloud
+                        const data = await exportAllData();
+                        queueSync(data);
+                    } else {
+                        setSyncStatus('offline');
+                    }
+                } catch (e) {
+                    setSyncStatus('offline');
+                }
+            }
+
+            // Load daily notes from local
+            try {
+                const notes = await getDailyNotesLocal();
+                setDailyNotes(notes);
+            } catch (e) { console.error('Failed to load daily notes:', e); }
         })();
+
+        return () => removeSyncListener(onSyncStatus);
     }, []);
 
     const loadHistory = async () => {
         setIsLoadingHistory(true)
         try {
             const localData = await getLocalHistory()
-            const cloudData = await fetchSupabaseHistory()
-
-            // Map cloud data
-            const formattedCloud = (cloudData || []).map(file => ({
-                name: file.name,
-                created_at: file.created_at,
-                type: 'Cloud',
-                data: `${SUPABASE_PDF_URL.replace('/pdfs/', '/bills/')}${encodeURIComponent(file.name)}`
-            }))
-
-            // Combine and sort by date
-            const combined = [
-                ...localData.map(i => ({ ...i, type: 'Local' })),
-                ...formattedCloud
-            ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-
+            const combined = localData.map(i => ({ ...i, type: 'Local' })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
             setHistoryItems(combined)
         } catch (e) {
             console.error("History load error:", e)
         }
         setIsLoadingHistory(false)
+    }
+
+    // Load daily sales data
+    const loadDailySales = async () => {
+        setIsLoadingSales(true);
+        try {
+            // Try cloud first, fallback to local
+            let sales = [];
+            try {
+                sales = await fetchDailySales();
+            } catch (e) {
+                console.log('Cloud sales fetch failed, using local data');
+            }
+
+            // If cloud returned nothing, build from local billDetails
+            if (!sales || sales.length === 0) {
+                const localBills = await getBillDetails();
+                const grouped = {};
+                localBills.forEach(bill => {
+                    const key = bill.dateKey;
+                    if (!grouped[key]) {
+                        grouped[key] = {
+                            dateKey: key, date: bill.date, totalBills: 0,
+                            totalPieces: 0, totalBoxes: 0, totalAmount: 0,
+                            productBreakdown: {}, brandBreakdown: {}, bills: []
+                        };
+                    }
+                    const day = grouped[key];
+                    day.totalBills++;
+                    day.totalPieces += bill.totalPieces || 0;
+                    day.totalBoxes += bill.totalBoxes || 0;
+                    day.totalAmount += bill.grandTotal || 0;
+                    day.bills.push({ billId: bill.billId, customerName: bill.customerName, grandTotal: bill.grandTotal, totalPieces: bill.totalPieces, timestamp: bill.timestamp });
+                    (bill.lineItems || []).forEach(item => {
+                        const pk = item.name || 'Unknown';
+                        if (!day.productBreakdown[pk]) day.productBreakdown[pk] = { pieces: 0, brand: item.brand || 'Hawkins' };
+                        day.productBreakdown[pk].pieces += item.pieces || 0;
+                        const brand = item.brand || 'Hawkins';
+                        if (!day.brandBreakdown[brand]) day.brandBreakdown[brand] = 0;
+                        day.brandBreakdown[brand] += item.pieces || 0;
+                    });
+                });
+                sales = Object.values(grouped).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+            }
+
+            // Attach notes
+            const notes = await getDailyNotesLocal();
+            setDailyNotes(notes);
+            sales.forEach(day => { day.note = notes[day.dateKey] || ''; });
+
+            setDailySalesData(sales);
+        } catch (e) {
+            console.error('Failed to load daily sales:', e);
+        }
+        setIsLoadingSales(false);
     }
 
     const deleteHistoryItem = async (filename) => {
@@ -195,6 +314,7 @@ export default function App() {
 
     useEffect(() => {
         if (tab === 'history') loadHistory()
+        if (tab === 'sales') loadDailySales()
     }, [tab])
 
     const toggleSection = (key) => {
@@ -249,6 +369,7 @@ export default function App() {
         setAddModal(false)
         setCustomForm({ name: '', code: '', mrp: '', casePack: '', brand: '', options: '' })
         showToast('Item added!')
+        triggerCloudSync();
     }
 
     const handleAddClient = async () => {
@@ -260,6 +381,7 @@ export default function App() {
             setClientModal(false);
             setClientForm({ name: '' });
             showToast('Client created successfully!');
+            triggerCloudSync();
         } catch (e) {
             console.error(e);
             showToast('Failed. Name might already exist.');
@@ -302,6 +424,7 @@ export default function App() {
         setMrpEditId(null);
         setMrpEditVal('');
         showToast('MRP updated!');
+        triggerCloudSync();
     }
 
     const allCombined = useMemo(() => [...allItems, ...customItems], [customItems])
@@ -551,20 +674,62 @@ export default function App() {
             const extraData = { orders, customBillItems, customerName, billInputs, customItems };
             await savePDFToLocal(filename, pdfBlob, 'Bill', extraData)
 
+            const nowTs = Date.now();
+            const totalBoxesBill = orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.boxQty) || 0), 0);
+            const totalPiecesBill = orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.pcsQty) || 0), 0);
+
             if (customerName.trim()) {
                 const billRecord = {
                     filename,
                     date: today,
-                    timestamp: Date.now(),
+                    timestamp: nowTs,
                     totalItems: orderedItems.length + customBillItems.length,
                     grandTotal,
-                    boxes: orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.boxQty) || 0), 0),
-                    pieces: orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.pcsQty) || 0), 0)
+                    boxes: totalBoxesBill,
+                    pieces: totalPiecesBill
                 };
                 await saveClientBill(customerName, billRecord);
                 const updatedClients = await getClients();
                 setClientsList(updatedClients);
             }
+
+            // 2. Save detailed bill for daily sales tracking
+            const now = new Date();
+            const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+            const lineItems = [];
+            orderedItems.forEach(item => {
+                const bData = billInputs[item.id] || {};
+                const userMrp = parseFloat(bData.mrp) || 0;
+                const userDisc = parseFloat(bData.discount) || 0;
+                const totalUnits = item.type === 'box' ? (item.qty * (item.casePack || 1)) : item.qty;
+                const rawTotal = totalUnits * userMrp;
+                const finalPrice = Math.round(rawTotal * (1 - userDisc / 100));
+                lineItems.push({ name: item.name, code: item.code, brand: item.brand || 'Hawkins', type: item.type, qty: item.qty, pieces: totalUnits, mrp: userMrp, finalPrice });
+            });
+            customBillItems.forEach(cbi => {
+                const userMrp = parseFloat(cbi.mrp) || 0;
+                const userDisc = parseFloat(cbi.discount) || 0;
+                let totalUnits = parseInt(cbi.pcsQty) || 0;
+                if (parseInt(cbi.boxQty) > 0) totalUnits += parseInt(cbi.boxQty);
+                const rawTotal = totalUnits * userMrp;
+                const finalPrice = Math.round(rawTotal * (1 - userDisc / 100));
+                lineItems.push({ name: cbi.name, code: cbi.code || '-', brand: cbi.brand || 'Custom', type: 'pcs', qty: totalUnits, pieces: totalUnits, mrp: userMrp, finalPrice });
+            });
+
+            const billDetailRecord = {
+                billId: `bill-${nowTs}`,
+                customerName: customerName.trim() || 'Walk-in',
+                date: today,
+                dateKey,
+                timestamp: nowTs,
+                grandTotal,
+                totalBoxes: totalBoxesBill,
+                totalPieces: totalPiecesBill,
+                lineItems
+            };
+            try { await saveBillDetails(billDetailRecord); } catch(e) { console.error('Bill details save error:', e); }
+            try { await saveBillToCloud(billDetailRecord); } catch(e) { console.error('Cloud bill save error:', e); }
+            triggerCloudSync();
 
             if (isNative()) {
                 await saveAndOpenPdf(filename, pdfBlob)
@@ -660,20 +825,58 @@ export default function App() {
             const extraData = { orders, customBillItems, customerName, billInputs, customItems };
             await savePDFToLocal(filename, pdfBlob, 'Bill', extraData)
 
+            const nowTs = Date.now();
+            const totalBoxesBill = orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.boxQty) || 0), 0);
+            const totalPiecesBill = orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.pcsQty) || 0), 0);
+
             if (customerName.trim()) {
                 const billRecord = {
                     filename,
                     date: today,
-                    timestamp: Date.now(),
+                    timestamp: nowTs,
                     totalItems: orderedItems.length + customBillItems.length,
                     grandTotal,
-                    boxes: orderedItems.filter(i => i.type === 'box').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.boxQty) || 0), 0),
-                    pieces: orderedItems.filter(i => i.type === 'pcs').reduce((a, i) => a + i.qty, 0) + customBillItems.reduce((a, i) => a + (parseInt(i.pcsQty) || 0), 0)
+                    boxes: totalBoxesBill,
+                    pieces: totalPiecesBill
                 };
                 await saveClientBill(customerName, billRecord);
                 const updatedClients = await getClients();
                 setClientsList(updatedClients);
             }
+
+            // Save detailed bill for daily sales
+            const now = new Date();
+            const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+            const lineItems = [];
+            orderedItems.forEach(item => {
+                const bData = billInputs[item.id] || {};
+                const userMrp = parseFloat(bData.mrp) || 0;
+                const userDisc = parseFloat(bData.discount) || 0;
+                const totalUnits = item.type === 'box' ? (item.qty * (item.casePack || 1)) : item.qty;
+                const rawTotal = totalUnits * userMrp;
+                const finalPrice = Math.round(rawTotal * (1 - userDisc / 100));
+                lineItems.push({ name: item.name, code: item.code, brand: item.brand || 'Hawkins', type: item.type, qty: item.qty, pieces: totalUnits, mrp: userMrp, finalPrice });
+            });
+            customBillItems.forEach(cbi => {
+                const userMrp = parseFloat(cbi.mrp) || 0;
+                const userDisc = parseFloat(cbi.discount) || 0;
+                let totalUnits = parseInt(cbi.pcsQty) || 0;
+                if (parseInt(cbi.boxQty) > 0) totalUnits += parseInt(cbi.boxQty);
+                const rawTotal = totalUnits * userMrp;
+                const finalPrice = Math.round(rawTotal * (1 - userDisc / 100));
+                lineItems.push({ name: cbi.name, code: cbi.code || '-', brand: cbi.brand || 'Custom', type: 'pcs', qty: totalUnits, pieces: totalUnits, mrp: userMrp, finalPrice });
+            });
+
+            const billDetailRecord = {
+                billId: `bill-disc-${nowTs}`,
+                customerName: customerName.trim() || 'Walk-in',
+                date: today, dateKey, timestamp: nowTs,
+                grandTotal, totalBoxes: totalBoxesBill, totalPieces: totalPiecesBill,
+                lineItems
+            };
+            try { await saveBillDetails(billDetailRecord); } catch(e) { console.error(e); }
+            try { await saveBillToCloud(billDetailRecord); } catch(e) { console.error(e); }
+            triggerCloudSync();
 
             if (isNative()) {
                 await saveAndOpenPdf(filename, pdfBlob)
@@ -746,7 +949,13 @@ export default function App() {
             <header className="header">
                 <div className="header-top">
                     <h1><span>Hawkins</span> Order Manager</h1>
-                    {totalCount > 0 && <span className="badge">{totalCount}</span>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className={`sync-indicator ${syncStatus}`}>
+                            <span className="sync-dot"></span>
+                            {syncStatus === 'synced' ? '✅ Synced' : syncStatus === 'syncing' ? '🔄 Syncing...' : syncStatus === 'pending' ? '⏳ Pending' : syncStatus === 'error' ? '⚠️ Error' : '📴 Offline'}
+                        </div>
+                        {totalCount > 0 && <span className="badge">{totalCount}</span>}
+                    </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: 6, margin: '14px 0 8px', overflowX: 'auto', paddingBottom: 4 }}>
@@ -781,6 +990,9 @@ export default function App() {
                     </button>
                     <button className={`tab-btn${tab === 'clients' ? ' active' : ''}`} onClick={() => { setActiveClient(null); setTab('clients'); }}>
                         👥 Clients
+                    </button>
+                    <button className={`tab-btn${tab === 'sales' ? ' active' : ''}`} onClick={() => setTab('sales')}>
+                        📊 Sales
                     </button>
                 </div>
 
@@ -1000,7 +1212,7 @@ export default function App() {
 
                     {tab === 'history' && (
                         <div className="order-summary" style={{ padding: '16px 0' }}>
-                            <h2 style={{ padding: '0 16px', marginBottom: 12 }}>Cloud Storage History</h2>
+                            <h2 style={{ padding: '0 16px', marginBottom: 12 }}>PDF History</h2>
                             <div style={{ padding: '0 16px', marginBottom: '8px' }}>
                                 <input className="search-input" style={{ width: '100%', padding: '10px 14px' }} placeholder="Search History by Customer Name / Filename..." value={historySearch} onChange={e => setHistorySearch(e.target.value)} />
                             </div>
@@ -1223,6 +1435,7 @@ export default function App() {
                                                                     setClientsList(updated);
                                                                     setActiveClient(updated.find(c => c.name === activeClient.name));
                                                                     showToast(`${manualEntry === 'bill' ? 'Bill' : 'Receipt'} added!`);
+                                                                    triggerCloudSync();
                                                                 } catch(e) { console.error(e); showToast('Error saving entry'); }
                                                             }} style={{ flex: 1, background: manualEntry === 'bill' ? 'var(--accent)' : 'var(--green)', color: '#fff', border: 'none', padding: '10px', borderRadius: 8, fontWeight: 'bold' }}>Save</button>
                                                             <button onClick={() => setManualEntry(null)} style={{ background: '#ddd', color: '#333', border: 'none', padding: '10px 16px', borderRadius: 8, fontWeight: 'bold' }}>Cancel</button>
@@ -1310,6 +1523,7 @@ export default function App() {
                                                                     setClientsList(updated);
                                                                     setActiveClient(updated.find(c => c.name === activeClient.name));
                                                                     showToast('Record Deleted!');
+                                                                    triggerCloudSync();
                                                                 } catch(e) { console.error(e); }
                                                             }
                                                         }} className="client-action-btn" style={{ background: '#ffebee', color: '#d32f2f', border: '1px solid #ffcdd2' }}>🗑 Delete</button>
@@ -1345,6 +1559,7 @@ export default function App() {
                                                                 setClientsList(updated);
                                                                 setActiveClient(updated.find(c => c.name === activeClient.name));
                                                                 showToast('Record Updated!');
+                                                                triggerCloudSync();
                                                             } catch(e) { console.error(e); showToast('Error updating entry'); }
                                                         }} style={{ flex: 1, background: '#f57f17', color: '#fff', border: 'none', padding: '10px', borderRadius: 8, fontWeight: 'bold' }}>Update</button>
                                                         <button onClick={() => setEditEntry(null)} style={{ background: '#ddd', color: '#333', border: 'none', padding: '10px 16px', borderRadius: 8, fontWeight: 'bold' }}>Cancel</button>
@@ -1354,6 +1569,167 @@ export default function App() {
                                         )}
                                     </div>
                                 </div>
+                            )}
+                        </div>
+                    )}
+
+                    {tab === 'sales' && (
+                        <div className="sales-container">
+                            <div className="sales-header">
+                                <h2>📊 Daily Sales</h2>
+                                <button className="sales-export-btn" onClick={async () => {
+                                    try {
+                                        showToast('Generating report...');
+                                        const doc = new jsPDF();
+                                        const todayStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                                        doc.setFontSize(16);
+                                        doc.text(`Daily Sales Report - ${todayStr}`, 14, 20);
+                                        let y = 32;
+                                        dailySalesData.forEach(day => {
+                                            if (y > 260) { doc.addPage(); y = 20; }
+                                            doc.setFontSize(12);
+                                            doc.setFont(undefined, 'bold');
+                                            doc.text(`${day.date} — ${day.totalPieces} pcs, ${day.totalBills} bills, ₹${day.totalAmount}`, 14, y);
+                                            y += 8;
+                                            doc.setFontSize(9);
+                                            doc.setFont(undefined, 'normal');
+                                            // Product breakdown
+                                            Object.entries(day.productBreakdown || {}).forEach(([name, info]) => {
+                                                if (y > 275) { doc.addPage(); y = 20; }
+                                                doc.text(`  ${name}: ${info.pieces} pcs (${info.brand})`, 14, y);
+                                                y += 5;
+                                            });
+                                            // Brand breakdown
+                                            const brandLine = Object.entries(day.brandBreakdown || {}).map(([b, c]) => `${b}: ${c} pcs`).join(' | ');
+                                            if (brandLine) { doc.text(`  Brands: ${brandLine}`, 14, y); y += 5; }
+                                            if (day.note) { doc.text(`  Notes: ${day.note}`, 14, y); y += 5; }
+                                            y += 4;
+                                        });
+                                        const safeDate = todayStr.replace(/[^a-zA-Z0-9]/g, '_');
+                                        const filename = `Daily_Sales_Report_${safeDate}.pdf`;
+                                        if (isNative()) {
+                                            const pdfBlob = doc.output('blob');
+                                            await saveAndOpenPdf(filename, pdfBlob);
+                                        } else {
+                                            doc.save(filename);
+                                        }
+                                        showToast('Report generated!');
+                                    } catch(e) { console.error(e); showToast('Failed to generate report'); }
+                                }}>📄 Export Report</button>
+                            </div>
+
+                            {isLoadingSales ? (
+                                <p style={{ padding: '16px', color: '#666' }}>Loading sales data...</p>
+                            ) : dailySalesData.length === 0 ? (
+                                <div className="sales-empty">
+                                    <div className="sales-empty-icon">📊</div>
+                                    <p>No sales data yet.<br/>Generate bills to see daily sales here.</p>
+                                </div>
+                            ) : (
+                                dailySalesData.map(day => {
+                                    const isOpen = openSalesDays[day.dateKey];
+                                    const getBrandClass = (brand) => {
+                                        const b = brand.toLowerCase();
+                                        if (b === 'hawkins') return 'brand-hawkins';
+                                        if (b === 'prestige') return 'brand-prestige';
+                                        return 'brand-other';
+                                    };
+
+                                    return (
+                                        <div className="sales-day-card" key={day.dateKey}>
+                                            <div className="sales-day-header" onClick={() => setOpenSalesDays(p => ({ ...p, [day.dateKey]: !p[day.dateKey] }))}>
+                                                <div className="sales-day-date">
+                                                    <span className="sales-day-date-main">📅 {day.date}</span>
+                                                    <span className="sales-day-date-sub">{day.totalBills} bill{day.totalBills !== 1 ? 's' : ''}</span>
+                                                </div>
+                                                <div className="sales-day-summary">
+                                                    <span className="sales-day-pieces">{day.totalPieces} pcs</span>
+                                                    <span className={`sales-day-chevron${isOpen ? ' open' : ''}`}>▼</span>
+                                                </div>
+                                            </div>
+
+                                            {isOpen && (
+                                                <div className="sales-day-detail">
+                                                    {/* Total Amount */}
+                                                    <div className="sales-detail-section">
+                                                        <div className="sales-amount-row">
+                                                            <span className="sales-amount-label">💰 Total Amount</span>
+                                                            <span className="sales-amount-val">₹{day.totalAmount}</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Bills */}
+                                                    {day.bills && day.bills.length > 0 && (
+                                                        <div className="sales-detail-section">
+                                                            <div className="sales-detail-title">Bills</div>
+                                                            <div className="sales-product-list">
+                                                                {day.bills.map((b, i) => (
+                                                                    <div key={i} className="sales-bill-item">
+                                                                        <span className="sales-bill-customer">{b.customerName}</span>
+                                                                        <span className="sales-bill-amount">₹{b.grandTotal} ({b.totalPieces} pcs)</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Product Breakdown */}
+                                                    {Object.keys(day.productBreakdown || {}).length > 0 && (
+                                                        <div className="sales-detail-section">
+                                                            <div className="sales-detail-title">Product Breakdown</div>
+                                                            <div className="sales-product-list">
+                                                                {Object.entries(day.productBreakdown).sort((a,b) => b[1].pieces - a[1].pieces).map(([name, info]) => (
+                                                                    <div key={name} className="sales-product-row">
+                                                                        <span className="sales-product-name">{name}</span>
+                                                                        <span className="sales-product-qty">{info.pieces} pcs</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Brand Breakdown */}
+                                                    {Object.keys(day.brandBreakdown || {}).length > 0 && (
+                                                        <div className="sales-detail-section">
+                                                            <div className="sales-detail-title">Brand Breakdown</div>
+                                                            <div className="sales-brand-list">
+                                                                {Object.entries(day.brandBreakdown).sort((a,b) => b[1] - a[1]).map(([brand, count]) => (
+                                                                    <div key={brand} className={`sales-brand-badge ${getBrandClass(brand)}`}>
+                                                                        <span className="sales-brand-dot"></span>
+                                                                        <span>{brand}</span>
+                                                                        <span className="sales-brand-count">{count} pcs</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Daily Notes */}
+                                                    <div className="sales-detail-section">
+                                                        <div className="sales-detail-title">📝 Notes</div>
+                                                        <textarea
+                                                            className="sales-note-area"
+                                                            placeholder="Add notes for this day... (e.g. Festival sale, Good day)"
+                                                            value={dailyNoteEditing[day.dateKey] !== undefined ? dailyNoteEditing[day.dateKey] : (dailyNotes[day.dateKey] || '')}
+                                                            onChange={e => setDailyNoteEditing(p => ({ ...p, [day.dateKey]: e.target.value }))}
+                                                        />
+                                                        <button className="sales-note-save" onClick={async () => {
+                                                            const noteText = dailyNoteEditing[day.dateKey];
+                                                            if (noteText === undefined) return;
+                                                            try {
+                                                                await saveDailyNoteLocal(day.dateKey, noteText);
+                                                                try { await saveDailyNoteToCloud(day.dateKey, noteText); } catch(e) {}
+                                                                setDailyNotes(p => ({ ...p, [day.dateKey]: noteText }));
+                                                                setDailyNoteEditing(p => { const n = {...p}; delete n[day.dateKey]; return n; });
+                                                                showToast('Note saved!');
+                                                            } catch(e) { showToast('Failed to save note'); }
+                                                        }}>💾 Save Note</button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     )}
