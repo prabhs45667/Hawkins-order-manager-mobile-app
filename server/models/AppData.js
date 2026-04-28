@@ -1,48 +1,21 @@
 const mongoose = require('mongoose');
 
 /**
- * AppData — Single document that stores the entire app state snapshot.
- * We use a fixed _id of 'main' so there's only ever one document.
- * This is the primary sync/restore mechanism.
+ * AppData — Stores each user's app state snapshot (ENCRYPTED).
+ * Each user/device gets a unique userId so data is isolated.
+ * All sensitive data is stored as an encrypted payload.
  */
 const AppDataSchema = new mongoose.Schema({
-    _id: { type: String, default: 'main' },
+    _id: { type: String },
 
-    clients: [{
-        name: String,
-        displayName: String,
-        bills: [{
-            filename: String,
-            date: String,
-            timestamp: Number,
-            totalItems: Number,
-            grandTotal: Number,
-            boxes: Number,
-            pieces: Number,
-            remarks: String
-        }],
-        receipts: [{
-            amount: Number,
-            date: String,
-            timestamp: Number,
-            remarks: String
-        }],
-        amountReceived: Number
-    }],
+    // Encrypted JSON string containing: clients, customProducts, mrpOverrides, customPdfNames
+    encryptedPayload: { type: String },
 
-    customProducts: [{
-        id: String,
-        name: String,
-        code: String,
-        mrp: Number,
-        casePack: Number,
-        brand: String
-    }],
-
-    mrpOverrides: mongoose.Schema.Types.Mixed,  // { itemId: mrpValue }
-
-    // We store custom PDF metadata only (not the actual PDF data — too large)
-    customPdfNames: [String],
+    // Legacy plaintext fields (kept for backward compatibility during migration)
+    clients: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    customProducts: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    mrpOverrides: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    customPdfNames: { type: mongoose.Schema.Types.Mixed, default: undefined },
 
     updatedAt: { type: Date, default: Date.now }
 }, { timestamps: true });

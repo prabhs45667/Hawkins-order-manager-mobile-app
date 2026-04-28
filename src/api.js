@@ -2,16 +2,51 @@
  * api.js — Frontend API layer for MongoDB cloud sync.
  * Communicates with the Express backend server.
  * All data changes are synced to MongoDB for permanent backup.
+ * 
+ * Each device gets a unique userId so data is isolated per user.
  */
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// ---- User ID Management ----
+
+/**
+ * Generate or retrieve a unique userId for this device.
+ * Stored in localStorage so it persists across app restarts.
+ * Each device/install gets its own userId = isolated data.
+ */
+const USER_ID_KEY = 'hawkins_user_id';
+
+const generateUserId = () => {
+    // Generate a random unique ID (e.g., "user-a1b2c3d4e5f6")
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let id = 'user-';
+    for (let i = 0; i < 12; i++) {
+        id += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return id;
+};
+
+export const getUserId = () => {
+    let userId = localStorage.getItem(USER_ID_KEY);
+    if (!userId) {
+        userId = generateUserId();
+        localStorage.setItem(USER_ID_KEY, userId);
+        console.log('🆔 New user ID created:', userId);
+    }
+    return userId;
+};
 
 // ---- Helpers ----
 
 const apiCall = async (path, options = {}) => {
     try {
+        const userId = getUserId();
         const res = await fetch(`${API_BASE}${path}`, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Id': userId
+            },
             ...options
         });
         if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -43,6 +78,7 @@ export const syncToCloud = async (data) => {
 /**
  * Download full app state from MongoDB.
  * Called on startup if local DB is empty.
+ * Only returns data for THIS user's userId.
  */
 export const restoreFromCloud = async () => {
     const result = await apiCall('/api/restore');
@@ -210,4 +246,3 @@ export const deleteManualSaleFromCloud = async (saleId) => {
 export const deleteNoteFromCloud = async (dateKey) => {
     return apiCall(`/api/daily-notes/${encodeURIComponent(dateKey)}`, { method: 'DELETE' });
 };
-

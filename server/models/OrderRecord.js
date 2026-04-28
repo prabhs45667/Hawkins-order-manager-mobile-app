@@ -1,31 +1,28 @@
 const mongoose = require('mongoose');
 
 /**
- * OrderRecord — Stores detailed line items for every "Order" generated.
- * This is separate from BillRecord, as Orders are just quotes/inquiries,
- * whereas Bills represent finalized daily sales.
+ * OrderRecord — Stores order/quote data (ENCRYPTED sensitive fields).
+ * Only orderId, userId, dateKey, timestamp are plaintext for querying.
  */
 const OrderRecordSchema = new mongoose.Schema({
     orderId: { type: String, required: true, unique: true },
-    customerName: String,
-    date: String,
+    userId: { type: String, default: 'main' },
     dateKey: String,
     timestamp: Number,
+
+    // Encrypted JSON string containing: customerName, date, totalBoxes, totalPieces, lineItems
+    encryptedData: { type: String },
+
+    // Legacy plaintext fields
+    customerName: String,
+    date: String,
     totalBoxes: Number,
     totalPieces: Number,
-
-    lineItems: [{
-        name: String,
-        code: String,
-        brand: { type: String, default: 'Hawkins' },
-        type: String,      // 'box' or 'pcs'
-        qty: Number,        // raw quantity
-        pieces: Number      // total pieces
-    }],
+    lineItems: { type: mongoose.Schema.Types.Mixed, default: undefined },
 
     createdAt: { type: Date, default: Date.now }
 });
 
-OrderRecordSchema.index({ dateKey: 1 });
+OrderRecordSchema.index({ userId: 1, dateKey: 1 });
 
 module.exports = mongoose.model('OrderRecord', OrderRecordSchema);

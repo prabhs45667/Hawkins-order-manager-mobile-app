@@ -8,6 +8,7 @@ const BillRecord = require('./models/BillRecord');
 const OrderRecord = require('./models/OrderRecord');
 const DailyNote = require('./models/DailyNote');
 const ManualSale = require('./models/ManualSale');
+const { encrypt, decrypt } = require('./crypto');
 
 
 const app = express();
@@ -25,6 +26,11 @@ mongoose.connect(process.env.MONGODB_URI)
         process.exit(1);
     });
 
+// Helper: Extract userId from request (header or query param, defaults to 'main' for backward compat)
+const getUserId = (req) => {
+    return req.headers['x-user-id'] || req.query.userId || 'main';
+};
+
 // ==========================================
 // HEALTH CHECK
 // ==========================================
@@ -37,10 +43,33 @@ app.get('/', (req, res) => {
 // ==========================================
 app.post('/api/orders', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const orderData = req.body;
+
+        // Encrypt sensitive data
+        const sensitiveData = {
+            customerName: orderData.customerName,
+            date: orderData.date,
+            totalBoxes: orderData.totalBoxes,
+            totalPieces: orderData.totalPieces,
+            lineItems: orderData.lineItems
+        };
+
         const order = await OrderRecord.findOneAndUpdate(
             { orderId: orderData.orderId },
-            orderData,
+            {
+                orderId: orderData.orderId,
+                userId,
+                dateKey: orderData.dateKey,
+                timestamp: orderData.timestamp,
+                encryptedData: encrypt(sensitiveData),
+                // Clear legacy plaintext fields
+                customerName: undefined,
+                date: undefined,
+                totalBoxes: undefined,
+                totalPieces: undefined,
+                lineItems: undefined
+            },
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         res.json({ success: true, order });
@@ -52,10 +81,25 @@ app.post('/api/orders', async (req, res) => {
 
 app.get('/api/orders', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const { dateKey } = req.query;
-        const filter = dateKey ? { dateKey } : {};
+        const filter = { userId };
+        if (dateKey) filter.dateKey = dateKey;
         const orders = await OrderRecord.find(filter).sort({ timestamp: -1 }).lean();
-        res.json({ success: true, orders });
+
+        // Decrypt orders
+        const decryptedOrders = orders.map(order => {
+            if (order.encryptedData) {
+                const decrypted = decrypt(order.encryptedData);
+                if (decrypted) {
+                    return { ...order, ...decrypted, encryptedData: undefined };
+                }
+            }
+            // Legacy unencrypted data — return as-is
+            return order;
+        });
+
+        res.json({ success: true, orders: decryptedOrders });
     } catch (err) {
         console.error('Orders fetch error:', err);
         res.status(500).json({ success: false, error: err.message });
@@ -63,20 +107,27 @@ app.get('/api/orders', async (req, res) => {
 });
 
 // ==========================================
-// FULL DATA SYNC (Upload entire app state)
+// FULL DATA SYNC (Upload entire app state — ENCRYPTED)
 // ==========================================
 app.post('/api/sync', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const { clients, customProducts, mrpOverrides, customPdfNames } = req.body;
 
+        // Encrypt the entire app state as one payload
+        const payload = { clients, customProducts, mrpOverrides, customPdfNames };
+        const encryptedPayload = encrypt(payload);
+
         const data = await AppData.findByIdAndUpdate(
-            'main',
+            userId,
             {
-                _id: 'main',
-                clients: clients || [],
-                customProducts: customProducts || [],
-                mrpOverrides: mrpOverrides || {},
-                customPdfNames: customPdfNames || [],
+                _id: userId,
+                encryptedPayload,
+                // Clear legacy plaintext fields
+                clients: undefined,
+                customProducts: undefined,
+                mrpOverrides: undefined,
+                customPdfNames: undefined,
                 updatedAt: new Date()
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -90,14 +141,35 @@ app.post('/api/sync', async (req, res) => {
 });
 
 // ==========================================
-// RESTORE (Download full app state)
+// RESTORE (Download full app state — DECRYPTED)
 // ==========================================
 app.get('/api/restore', async (req, res) => {
     try {
-        const data = await AppData.findById('main').lean();
+        const userId = getUserId(req);
+        const data = await AppData.findById(userId).lean();
         if (!data) {
             return res.json({ success: true, data: null, message: 'No data found' });
         }
+
+        // Decrypt the payload
+        if (data.encryptedPayload) {
+            const decrypted = decrypt(data.encryptedPayload);
+            if (decrypted) {
+                return res.json({
+                    success: true,
+                    data: {
+                        _id: data._id,
+                        clients: decrypted.clients || [],
+                        customProducts: decrypted.customProducts || [],
+                        mrpOverrides: decrypted.mrpOverrides || {},
+                        customPdfNames: decrypted.customPdfNames || [],
+                        updatedAt: data.updatedAt
+                    }
+                });
+            }
+        }
+
+        // Legacy unencrypted data — return as-is (backward compat)
         res.json({ success: true, data });
     } catch (err) {
         console.error('Restore error:', err);
@@ -106,14 +178,39 @@ app.get('/api/restore', async (req, res) => {
 });
 
 // ==========================================
-// BILL RECORDS (Detailed line items for daily sales)
+// BILL RECORDS (ENCRYPTED sensitive fields)
 // ==========================================
 app.post('/api/bills', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const billData = req.body;
+
+        // Encrypt sensitive data
+        const sensitiveData = {
+            customerName: billData.customerName,
+            date: billData.date,
+            grandTotal: billData.grandTotal,
+            totalBoxes: billData.totalBoxes,
+            totalPieces: billData.totalPieces,
+            lineItems: billData.lineItems
+        };
+
         const bill = await BillRecord.findOneAndUpdate(
             { billId: billData.billId },
-            billData,
+            {
+                billId: billData.billId,
+                userId,
+                dateKey: billData.dateKey,
+                timestamp: billData.timestamp,
+                encryptedData: encrypt(sensitiveData),
+                // Clear legacy plaintext fields
+                customerName: undefined,
+                date: undefined,
+                grandTotal: undefined,
+                totalBoxes: undefined,
+                totalPieces: undefined,
+                lineItems: undefined
+            },
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         res.json({ success: true, bill });
@@ -123,13 +220,27 @@ app.post('/api/bills', async (req, res) => {
     }
 });
 
-// Get all bills (optionally filter by date)
+// Get all bills (optionally filter by date) — DECRYPTED
 app.get('/api/bills', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const { dateKey } = req.query;
-        const filter = dateKey ? { dateKey } : {};
+        const filter = { userId };
+        if (dateKey) filter.dateKey = dateKey;
         const bills = await BillRecord.find(filter).sort({ timestamp: -1 }).lean();
-        res.json({ success: true, bills });
+
+        // Decrypt bills
+        const decryptedBills = bills.map(bill => {
+            if (bill.encryptedData) {
+                const decrypted = decrypt(bill.encryptedData);
+                if (decrypted) {
+                    return { ...bill, ...decrypted, encryptedData: undefined };
+                }
+            }
+            return bill;
+        });
+
+        res.json({ success: true, bills: decryptedBills });
     } catch (err) {
         console.error('Bills fetch error:', err);
         res.status(500).json({ success: false, error: err.message });
@@ -137,11 +248,21 @@ app.get('/api/bills', async (req, res) => {
 });
 
 // ==========================================
-// DAILY SALES AGGREGATION
+// DAILY SALES AGGREGATION (decrypts bills for aggregation)
 // ==========================================
 app.get('/api/daily-sales', async (req, res) => {
     try {
-        const bills = await BillRecord.find({}).sort({ timestamp: -1 }).lean();
+        const userId = getUserId(req);
+        const rawBills = await BillRecord.find({ userId }).sort({ timestamp: -1 }).lean();
+
+        // Decrypt all bills first
+        const bills = rawBills.map(bill => {
+            if (bill.encryptedData) {
+                const decrypted = decrypt(bill.encryptedData);
+                if (decrypted) return { ...bill, ...decrypted, encryptedData: undefined };
+            }
+            return bill;
+        });
 
         // Group by dateKey
         const grouped = {};
@@ -176,14 +297,12 @@ app.get('/api/daily-sales', async (req, res) => {
 
             // Aggregate line items
             (bill.lineItems || []).forEach(item => {
-                // Product breakdown — group by general category
                 const productKey = item.name || 'Unknown';
                 if (!day.productBreakdown[productKey]) {
                     day.productBreakdown[productKey] = { pieces: 0, brand: item.brand || 'Hawkins' };
                 }
                 day.productBreakdown[productKey].pieces += item.pieces || 0;
 
-                // Brand breakdown
                 const brand = item.brand || 'Hawkins';
                 if (!day.brandBreakdown[brand]) {
                     day.brandBreakdown[brand] = 0;
@@ -192,15 +311,20 @@ app.get('/api/daily-sales', async (req, res) => {
             });
         });
 
-        // Convert to array sorted by date desc
         const dailySales = Object.values(grouped).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
 
-        // Fetch daily notes
-        const notes = await DailyNote.find({}).lean();
+        // Fetch and decrypt daily notes
+        const rawNotes = await DailyNote.find({ userId }).lean();
         const notesMap = {};
-        notes.forEach(n => { notesMap[n.dateKey] = n.note; });
+        rawNotes.forEach(n => {
+            if (n.encryptedNote) {
+                const decrypted = decrypt(n.encryptedNote, false);
+                notesMap[n.dateKey] = decrypted || '';
+            } else {
+                notesMap[n.dateKey] = n.note || '';
+            }
+        });
 
-        // Attach notes
         dailySales.forEach(day => {
             day.note = notesMap[day.dateKey] || '';
         });
@@ -213,14 +337,21 @@ app.get('/api/daily-sales', async (req, res) => {
 });
 
 // ==========================================
-// DAILY NOTES
+// DAILY NOTES (ENCRYPTED)
 // ==========================================
 app.post('/api/daily-notes', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const { dateKey, note } = req.body;
         const result = await DailyNote.findOneAndUpdate(
-            { dateKey },
-            { dateKey, note, updatedAt: new Date() },
+            { userId, dateKey },
+            {
+                userId,
+                dateKey,
+                encryptedNote: encrypt(note || ''),
+                note: undefined,  // Clear legacy plaintext
+                updatedAt: new Date()
+            },
             { upsert: true, new: true }
         );
         res.json({ success: true, result });
@@ -232,7 +363,18 @@ app.post('/api/daily-notes', async (req, res) => {
 
 app.get('/api/daily-notes', async (req, res) => {
     try {
-        const notes = await DailyNote.find({}).lean();
+        const userId = getUserId(req);
+        const rawNotes = await DailyNote.find({ userId }).lean();
+
+        // Decrypt notes
+        const notes = rawNotes.map(n => {
+            if (n.encryptedNote) {
+                const decrypted = decrypt(n.encryptedNote, false);
+                return { ...n, note: decrypted || '', encryptedNote: undefined };
+            }
+            return n;
+        });
+
         res.json({ success: true, notes });
     } catch (err) {
         console.error('Daily notes fetch error:', err);
@@ -243,8 +385,9 @@ app.get('/api/daily-notes', async (req, res) => {
 // DELETE a daily note by dateKey
 app.delete('/api/daily-notes/:dateKey', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const { dateKey } = req.params;
-        await DailyNote.deleteOne({ dateKey });
+        await DailyNote.deleteOne({ userId, dateKey });
         res.json({ success: true });
     } catch (err) {
         console.error('Daily note delete error:', err);
@@ -253,14 +396,35 @@ app.delete('/api/daily-notes/:dateKey', async (req, res) => {
 });
 
 // ==========================================
-// MANUAL SALES (User-added sales entries)
+// MANUAL SALES (ENCRYPTED)
 // ==========================================
 app.post('/api/manual-sales', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const saleData = req.body;
+
+        // Encrypt sensitive data
+        const sensitiveData = {
+            date: saleData.date,
+            pieces: saleData.pieces,
+            amount: saleData.amount,
+            notes: saleData.notes
+        };
+
         const sale = await ManualSale.findOneAndUpdate(
             { saleId: saleData.saleId },
-            saleData,
+            {
+                saleId: saleData.saleId,
+                userId,
+                dateKey: saleData.dateKey,
+                timestamp: saleData.timestamp,
+                encryptedData: encrypt(sensitiveData),
+                // Clear legacy plaintext fields
+                date: undefined,
+                pieces: undefined,
+                amount: undefined,
+                notes: undefined
+            },
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         res.json({ success: true, sale });
@@ -272,7 +436,18 @@ app.post('/api/manual-sales', async (req, res) => {
 
 app.get('/api/manual-sales', async (req, res) => {
     try {
-        const sales = await ManualSale.find({}).sort({ timestamp: -1 }).lean();
+        const userId = getUserId(req);
+        const rawSales = await ManualSale.find({ userId }).sort({ timestamp: -1 }).lean();
+
+        // Decrypt sales
+        const sales = rawSales.map(sale => {
+            if (sale.encryptedData) {
+                const decrypted = decrypt(sale.encryptedData);
+                if (decrypted) return { ...sale, ...decrypted, encryptedData: undefined };
+            }
+            return sale;
+        });
+
         res.json({ success: true, sales });
     } catch (err) {
         console.error('Manual sales fetch error:', err);
@@ -282,8 +457,9 @@ app.get('/api/manual-sales', async (req, res) => {
 
 app.delete('/api/manual-sales/:saleId', async (req, res) => {
     try {
+        const userId = getUserId(req);
         const { saleId } = req.params;
-        await ManualSale.deleteOne({ saleId });
+        await ManualSale.deleteOne({ userId, saleId });
         res.json({ success: true });
     } catch (err) {
         console.error('Manual sale delete error:', err);
@@ -294,5 +470,5 @@ app.delete('/api/manual-sales/:saleId', async (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Hawkins API running on port ${PORT}`);
+    console.log('🔐 Data encryption: ENABLED');
 });
-

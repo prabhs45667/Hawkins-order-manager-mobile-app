@@ -6,11 +6,11 @@
  *   {{items_rows}}, {{name}}
  */
 
-const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || 'service_c2m2cld';
-const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID || 'template_wonmie9';
-const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || 'wfGz99FcyIqn7TqRD';
-const OWNER_EMAIL = import.meta.env.VITE_OWNER_EMAIL || 'singhjideep02@gmail.com';
-const OWNER_NAME = import.meta.env.VITE_OWNER_NAME || 'Prabhdeep Singh Narula';
+const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || '';
+const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID || '';
+const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || '';
+const OWNER_EMAIL = import.meta.env.VITE_OWNER_EMAIL || '';
+const OWNER_NAME = import.meta.env.VITE_OWNER_NAME || '';
 
 let emailjsInitialized = false;
 
